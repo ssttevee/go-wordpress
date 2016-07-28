@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"fmt"
 	"sort"
-	"errors"
 )
 
 // MenuItem represents a WordPress menu item
@@ -48,7 +47,7 @@ func (wp *WordPress) GetMenuLocations() ([]*MenuLocation, error) {
 		return nil, err
 	}
 
-	ret := make([]*MenuLocation, 0)
+	var ret []*MenuLocation
 	for rows.Next() {
 		var ml MenuLocation
 
@@ -67,7 +66,7 @@ func (wp *WordPress) GetMenuById(menuId int64) ([]*MenuItem, error) {
 	return wp.getMenuItems(&ObjectQueryOptions{MenuId: menuId})
 }
 
-// GetMenuById gets the entire menu hierarchy by the menu location slug
+// GetMenuBySlug gets the entire menu hierarchy by the menu location slug
 func (wp *WordPress) GetMenuBySlug(menuSlug string) ([]*MenuItem, error) {
 	return wp.getMenuItems(&ObjectQueryOptions{MenuName: menuSlug})
 }
@@ -104,7 +103,7 @@ func (wp *WordPress) getMenuItems(q *ObjectQueryOptions) ([]*MenuItem, error) {
 	}
 
 	// prepare a slice for the query parameters
-	params := make([]interface{}, 0)
+	var params []interface{}
 
 	// generate the SQL statement
 	stmt := "SELECT post_id, meta_key, meta_value FROM " + wp.table("postmeta") + " WHERE post_id IN (?"
@@ -224,7 +223,7 @@ func (wp *WordPress) getMenuItems(q *ObjectQueryOptions) ([]*MenuItem, error) {
 							var t, n string
 							var parent int64
 							if err := row.Scan(&t, &n, &parent); err != nil {
-								done <- errors.New(fmt.Sprintf("wordpress: %v", err))
+								done <- fmt.Errorf("wordpress: %v", err)
 							} else {
 								if mi.Title == "" {
 									mi.Title = t
@@ -246,7 +245,7 @@ func (wp *WordPress) getMenuItems(q *ObjectQueryOptions) ([]*MenuItem, error) {
 						var year, month int
 						var title, slug string
 						if err := row.Scan(&year, &month, &title, &slug); err != nil {
-							done <- errors.New(fmt.Sprintf("Unable to get post url - %v; %v", err, mi))
+							done <- fmt.Errorf("Unable to get post url - %v; %v", err, mi)
 						} else {
 							mi.Title = title
 							mi.Link = fmt.Sprintf("/%d/%d/%s", year, month, slug)
@@ -263,7 +262,7 @@ func (wp *WordPress) getMenuItems(q *ObjectQueryOptions) ([]*MenuItem, error) {
 		menuItems[mi.Id] = mi
 	}
 
-	ret := make([]*MenuItem, 0)
+	var ret []*MenuItem
 	for _, mi := range menuItems {
 		if mi.ParentId == 0 {
 			ret = append(ret, mi)

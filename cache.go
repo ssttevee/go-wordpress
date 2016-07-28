@@ -4,9 +4,10 @@ import (
 	"errors"
 )
 
+// ErrMissedCache is returned when a key is not found in the cache
 var ErrMissedCache = errors.New("couldn't find item in cache")
 
-// Interface for managing cache
+// CacheManager is used for managing cache
 type CacheManager interface {
 	// Get retrieves single item from cache and stores it into dst
 	//

@@ -6,13 +6,12 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
-	"errors"
 )
 
 var regexpQuerySeparators = regexp.MustCompile("[,+~]")
 var regexpQueryDelimiter = regexp.MustCompile("[^a-zA-Z]")
 
-// A WordPress 'post' object
+// Object represents a WordPress 'post' object
 //
 // Not really a Post object, per se, since WP uses it for other things like pages and menu items.
 // However it's in the 'posts' table, so... whatever...
@@ -56,10 +55,10 @@ type Object struct {
 	Name            string     `json:"slug"`
 
 	// URLs queued to be pinged.
-	ToPing          UrlList    `json:"-"`
+	ToPing          URLList    `json:"-"`
 
 	// URLs that have been pinged.
-	Pinged          UrlList    `json:"-"`
+	Pinged          URLList    `json:"-"`
 
 	// The post's local modified time.
 	Modified        time.Time  `json:"modified"`
@@ -180,14 +179,14 @@ func (obj *Object) GetMeta(keys ...string) (map[string]string, error) {
 
 	rows, err := obj.wp.db.Query(stmt, params...)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("Object GetMeta - Query: %v", err))
+		return nil, fmt.Errorf("Object GetMeta - Query: %v", err)
 	}
 
 	meta := make(map[string]string)
 	for rows.Next() {
 		var key, val string
 		if err := rows.Scan(&key, &val); err != nil {
-			return nil, errors.New(fmt.Sprintf("Object GetMeta - Scan: %v", err))
+			return nil, fmt.Errorf("Object GetMeta - Scan: %v", err)
 		}
 
 		meta[key] = val
@@ -257,7 +256,7 @@ func (wp *WordPress) GetObjects(objectIds ...int64) ([]*Object, error) {
 
 	rows, err := wp.db.Query(stmt, params...)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("GetObjects - Query: %v", err))
+		return nil, fmt.Errorf("GetObjects - Query: %v", err)
 	}
 
 	keys = make([]string, 0, len(keyMap))
@@ -292,7 +291,7 @@ func (wp *WordPress) GetObjects(objectIds ...int64) ([]*Object, error) {
 			&obj.Type,
 			&obj.MimeType,
 			&obj.CommentCount); err != nil {
-			return nil, errors.New(fmt.Sprintf("GetObjects - Scan: %v", err))
+			return nil, fmt.Errorf("GetObjects - Scan: %v", err)
 		}
 
 		obj.CommentStatus = commentStatus == "open"
@@ -322,7 +321,8 @@ func (wp *WordPress) GetObjects(objectIds ...int64) ([]*Object, error) {
 func (wp *WordPress) QueryObjects(q *ObjectQueryOptions) ([]int64, error) {
 	stmt := "SELECT DISTINCT ID FROM " + wp.table("posts") + " "
 	where := "WHERE "
-	params := make([]interface{}, 0)
+
+	var params []interface{}
 
 	termSearchSetup := "SELECT object_id FROM " + wp.table("term_relationships") + " AS tr " +
 		"INNER JOIN (" + wp.table("terms") + " AS t, " + wp.table("term_taxonomy") + " AS tt) " +
@@ -592,24 +592,24 @@ func (wp *WordPress) QueryObjects(q *ObjectQueryOptions) ([]int64, error) {
 		where += "ID IN (" + termSearchSetup + "tt.taxonomy = 'post_tag' AND t.term_id = ?) AND "
 		params = append(params, q.TagId)
 	} else if q.TagIdAnd != nil && len(q.TagIdAnd) > 0 {
-		for _, tagIdId := range q.TagIdAnd {
+		for _, tagId := range q.TagIdAnd {
 			where += "ID IN (" + termSearchSetup + "tt.taxonomy = 'post_tag' AND t.term_id = ?) AND "
-			params = append(params, tagIdId)
+			params = append(params, tagId)
 		}
 	} else if q.TagIdIn != nil && len(q.TagIdIn) > 0 {
 		where += "ID IN (" + termSearchSetup + "tt.taxonomy = 'post_tag' AND t.term_id IN (?"
 		params = append(params, q.TagIdIn[0])
-		for _, tagIdId := range q.TagIdIn[1:] {
+		for _, tagId := range q.TagIdIn[1:] {
 			where += ", ?"
-			params = append(params, tagIdId)
+			params = append(params, tagId)
 		}
 		where += ")) AND "
 	} else if q.TagIdNotIn != nil && len(q.TagIdNotIn) > 0 {
 		where += "ID NOT IN (" + termSearchSetup + "tt.taxonomy = 'post_tag' AND t.term_id IN (?"
 		params = append(params, q.TagIdNotIn[0])
-		for _, tagIdId := range q.TagIdNotIn[1:] {
+		for _, tagId := range q.TagIdNotIn[1:] {
 			where += ", ?"
-			params = append(params, tagIdId)
+			params = append(params, tagId)
 		}
 		where += ")) AND "
 	}
@@ -711,7 +711,7 @@ func (wp *WordPress) QueryObjects(q *ObjectQueryOptions) ([]int64, error) {
 		return nil, err
 	}
 
-	ret := make([]int64, 0)
+	var ret []int64
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {

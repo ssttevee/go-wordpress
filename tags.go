@@ -3,15 +3,16 @@ package wordpress
 import (
 	"encoding/json"
 	"fmt"
-	"errors"
 )
 
+// Tag represents a WordPress tag
 type Tag struct {
 	Term
 
 	Link   string `json:"url"`
 }
 
+// MarshalJSON marshals itself into json
 func (tag *Tag) MarshalJSON() ([]byte, error) {
 	return json.Marshal(map[string]interface{}{
 		"id": tag.Id,
@@ -47,7 +48,7 @@ func (wp *WordPress) GetTags(categoryIds ...int64) ([]*Tag, error) {
 				}
 
 				if len(parents) == 0 {
-					done <- errors.New(fmt.Sprintf("parent category for %d not found: %d", t.Id, t.Parent))
+					done <- fmt.Errorf("parent category for %d not found: %d", t.Id, t.Parent)
 				}
 
 				t.Link = parents[0].Link + "/" + t.Slug

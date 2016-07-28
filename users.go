@@ -9,6 +9,7 @@ import (
 
 const userCacheKey = "wp_user_%d"
 
+// User represents a WordPress user
 type User struct {
 	Id          int64     `json:"id"`
 	Slug        string    `json:"slug"`
@@ -23,7 +24,7 @@ type User struct {
 	Registered  time.Time `json:"-"`
 }
 
-// GetObjects gets all user data from the database
+// GetUsers gets all user data from the database
 func (wp *WordPress) GetUsers(userIds ...int64) ([]*User, error) {
 	if len(userIds) == 0 {
 		return []*User{}, nil
@@ -57,7 +58,7 @@ func (wp *WordPress) GetUsers(userIds ...int64) ([]*User, error) {
 	}
 
 
-	params := make([]interface{}, 0)
+	var params []interface{}
 	stmt := "SELECT u.ID, u.user_nicename, u.display_name, um.meta_value, u.user_email, u.user_url, u.user_registered " +
 		"FROM " + wp.table("users") + " AS u JOIN " + wp.table("usermeta") + " AS um ON um.user_id = u.ID " +
 		"WHERE um.meta_key = ? AND u.ID IN ("

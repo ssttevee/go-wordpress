@@ -4,6 +4,7 @@ import (
 	"github.com/wulijun/go-php-serialize/phpserialize"
 )
 
+// Attachment represents a WordPress attachment
 type Attachment struct {
 	Object
 
@@ -47,12 +48,12 @@ func (wp *WordPress) GetAttachments(attachmentIds ...int64) ([]*Attachment, erro
 						a.Height = int(height)
 					}
 
-					if image_meta, ok := meta["image_meta"].(map[interface{}]interface{}); ok {
-						if caption, ok := image_meta["caption"].(string); ok {
+					if imageMeta, ok := meta["image_meta"].(map[interface{}]interface{}); ok {
+						if caption, ok := imageMeta["caption"].(string); ok {
 							a.Caption = caption
 						}
 
-						if alt, ok := image_meta["title"].(string); ok {
+						if alt, ok := imageMeta["title"].(string); ok {
 							a.AltText = alt
 						}
 					}

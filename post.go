@@ -4,6 +4,7 @@ import (
 	"strconv"
 )
 
+// Post represents a WordPress post
 type Post struct {
 	Object
 
@@ -20,7 +21,7 @@ type Post struct {
 	Meta            map[string]string `json:"meta"`
 }
 
-// GetTags gets all post data from the database
+// GetPosts gets all post data from the database
 func (wp *WordPress) GetPosts(postIds ...int64) ([]*Post, error) {
 	if len(postIds) == 0 {
 		return []*Post{}, nil
@@ -86,6 +87,7 @@ func (wp *WordPress) GetPosts(postIds ...int64) ([]*Post, error) {
 	return ret, nil
 }
 
+// QueryPosts queries the database and returns all matching prost ids
 func (wp *WordPress) QueryPosts(q *ObjectQueryOptions) ([]int64, error) {
 	q.PostStatus = PostStatusPublish
 

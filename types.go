@@ -5,14 +5,15 @@ import (
 	"errors"
 )
 
-// UrlList represents a list of urls
+// URLList represents a list of urls
 //
 // This is just a helper to split incoming space-separated values from the database
 //
 // Used for pinged and to-ping urls
-type UrlList []string
+type URLList []string
 
-func (list UrlList) Scan(src interface{}) error {
+// Scan formats incoming data from a sql database
+func (list URLList) Scan(src interface{}) error {
 	if str, ok := src.([]uint8); ok {
 		if len(str) > 0 {
 			list = append(list, strings.Split(string(str), " ")...)

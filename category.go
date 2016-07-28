@@ -2,18 +2,19 @@ package wordpress
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 )
 
 const categoryCacheKey = "wp_category_%d"
 
+// Category represents a WordPress category
 type Category struct {
 	Term
 
 	Link   string `json:"url"`
 }
 
+// MarshalJSON marshals itself into json
 func (cat *Category) MarshalJSON() ([]byte, error) {
 	return json.Marshal(map[string]interface{}{
 		"id": cat.Id,
@@ -22,7 +23,7 @@ func (cat *Category) MarshalJSON() ([]byte, error) {
 		"url": cat.Link})
 }
 
-// GetTags gets all category data from the database
+// GetCategories gets all category data from the database
 func (wp *WordPress) GetCategories(categoryIds ...int64) ([]*Category, error) {
 	if len(categoryIds) == 0 {
 		return []*Category{}, nil
@@ -79,12 +80,12 @@ func (wp *WordPress) GetCategories(categoryIds ...int64) ([]*Category, error) {
 			go func() {
 				parents, err := wp.GetCategories(c.Parent)
 				if err != nil {
-					done <- errors.New(fmt.Sprintf("failed to get parent category for %d: %d\n%v", c.Id, c.Parent, err))
+					done <- fmt.Errorf("failed to get parent category for %d: %d\n%v", c.Id, c.Parent, err)
 					return
 				}
 
 				if len(parents) == 0 {
-					done <- errors.New(fmt.Sprintf("parent category for %d not found: %d", c.Id, c.Parent))
+					done <- fmt.Errorf("parent category for %d not found: %d", c.Id, c.Parent)
 				}
 
 				c.Link = parents[0].Link + "/" + c.Slug

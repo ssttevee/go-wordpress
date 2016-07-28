@@ -2,6 +2,8 @@ package wordpress
 
 import (
 	"database/sql"
+
+	// WordPress needs mysql
 	_ "github.com/go-sql-driver/mysql"
 )
 

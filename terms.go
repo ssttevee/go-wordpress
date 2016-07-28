@@ -3,9 +3,9 @@ package wordpress
 import (
 	"strconv"
 	"fmt"
-	"errors"
 )
 
+// Term represents a WordPress term
 type Term struct {
 	// Term ID.
 	Id          int64  `json:"id"`
@@ -105,7 +105,7 @@ func (wp *WordPress) GetTerms(termIds ...int64) ([]*Term, error) {
 
 	rows, err := wp.db.Query(stmt, params...)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("Term SQL query fail: %v", err))
+		return nil, fmt.Errorf("Term SQL query fail: %v", err)
 	}
 
 	keys = make([]string, 0, len(keyMap))
@@ -124,7 +124,7 @@ func (wp *WordPress) GetTerms(termIds ...int64) ([]*Term, error) {
 			&t.Description,
 			&t.Parent,
 			&t.Count); err != nil {
-			return nil, errors.New(fmt.Sprintf("Unable to read term data: %v", err))
+			return nil, fmt.Errorf("Unable to read term data: %v", err)
 		}
 
 		// prepare for storing to cache
@@ -151,7 +151,8 @@ func (wp *WordPress) QueryTerms(q *TermQueryOptions) ([]int64, error) {
 		"JOIN (" + wp.table("term_taxonomy") + " AS tt, " + wp.table("term_relationships") + " AS tr) " +
 		"ON tt.term_id = t.term_id AND tr.term_taxonomy_id = tt.term_taxonomy_id "
 	where := "WHERE "
-	params := make([]interface{}, 0)
+
+	var params []interface{}
 
 	if q.Name != "" {
 		where += "t.name = ? AND "
@@ -180,17 +181,17 @@ func (wp *WordPress) QueryTerms(q *TermQueryOptions) ([]int64, error) {
 	} else if q.ObjectIdIn != nil && len(q.ObjectIdIn) > 0 {
 		where += "tr.object_id IN (?"
 		params = append(params, q.ObjectIdIn[0])
-		for _, objectIdId := range q.ObjectIdIn[1:] {
+		for _, objectId := range q.ObjectIdIn[1:] {
 			where += ", ?"
-			params = append(params, objectIdId)
+			params = append(params, objectId)
 		}
 		where += ") AND "
 	} else if q.ObjectIdNotIn != nil && len(q.ObjectIdNotIn) > 0 {
 		where += "tr.object_id NOT IN (?"
 		params = append(params, q.ObjectIdNotIn[0])
-		for _, objectIdId := range q.ObjectIdNotIn[1:] {
+		for _, objectId := range q.ObjectIdNotIn[1:] {
 			where += ", ?"
-			params = append(params, objectIdId)
+			params = append(params, objectId)
 		}
 		where += ") AND "
 	}
@@ -258,6 +259,10 @@ func (wp *WordPress) QueryTerms(q *TermQueryOptions) ([]int64, error) {
 		where += ") AND "
 	}
 
+	if where == "WHERE " {
+		return []int64{}, nil
+	}
+
 	perPage := q.PerPage
 	if perPage >= 0 {
 		if perPage == 0 {
@@ -269,10 +274,8 @@ func (wp *WordPress) QueryTerms(q *TermQueryOptions) ([]int64, error) {
 		if q.Page > 1 {
 			limit += "OFFSET " + strconv.Itoa(q.Page * perPage) + " "
 		}
-	}
 
-	if where == "WHERE " {
-		return []int64{}, nil
+		where += limit
 	}
 
 	where = where[:len(where) - 4]
@@ -282,7 +285,7 @@ func (wp *WordPress) QueryTerms(q *TermQueryOptions) ([]int64, error) {
 		return nil, err
 	}
 
-	ret := make([]int64, 0)
+	var ret []int64
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {

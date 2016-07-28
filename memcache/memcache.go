@@ -1,18 +1,18 @@
 package memcache
 
 import (
-	"golang.org/x/net/context"
-	"google.golang.org/appengine/memcache"
 	"bytes"
 	"encoding/gob"
-	"time"
-	"reflect"
 	"errors"
 	"github.com/ssttevee/go-wordpress"
+	"golang.org/x/net/context"
+	"google.golang.org/appengine/memcache"
+	"reflect"
+	"time"
 )
 
 type Memcache struct {
-	c          context.Context
+	c context.Context
 
 	Expiration time.Duration
 }

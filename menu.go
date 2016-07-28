@@ -1,34 +1,34 @@
 package wordpress
 
 import (
-	"github.com/wulijun/go-php-serialize/phpserialize"
-	"strconv"
 	"fmt"
+	"github.com/wulijun/go-php-serialize/phpserialize"
 	"sort"
+	"strconv"
 )
 
 // MenuItem represents a WordPress menu item
 type MenuItem struct {
-	Id       int64        `json:"id"`
-	ParentId int64        `json:"-"`
+	Id       int64 `json:"id"`
+	ParentId int64 `json:"-"`
 
-	Order    int          `json:"-"`
+	Order int `json:"-"`
 
-	Title    string       `json:"title"`
-	Link     string       `json:"url"`
+	Title string `json:"title"`
+	Link  string `json:"url"`
 
-	Attr     string       `json:"attrs,omitempty"`
-	Classes  string       `json:"classes,omitempty"`
-	Target   string       `json:"target,omitempty"`
+	Attr    string `json:"attrs,omitempty"`
+	Classes string `json:"classes,omitempty"`
+	Target  string `json:"target,omitempty"`
 
-	ObjectId int64        `json:"object_id"`
-	Object   string       `json:"object"`
+	ObjectId int64  `json:"object_id"`
+	Object   string `json:"object"`
 
-	Type     MenuItemType `json:"type"`
+	Type MenuItemType `json:"type"`
 
-	Xfn      string       `json:"xfn,omitempty"`
+	Xfn string `json:"xfn,omitempty"`
 
-	Children []*MenuItem  `json:"children,omitempty"`
+	Children []*MenuItem `json:"children,omitempty"`
 }
 
 // MenuLocation represents a WordPress menu location
@@ -40,8 +40,8 @@ type MenuLocation struct {
 
 // GetMenuLocations gets the available menu locations from the database
 func (wp *WordPress) GetMenuLocations() ([]*MenuLocation, error) {
-	rows, err := wp.db.Query("SELECT t.term_id, t.name, t.slug FROM " + wp.table("terms") + " AS t " +
-		"JOIN " + wp.table("term_taxonomy") + " AS tt ON t.term_id = tt.term_id " +
+	rows, err := wp.db.Query("SELECT t.term_id, t.name, t.slug FROM "+wp.table("terms")+" AS t "+
+		"JOIN "+wp.table("term_taxonomy")+" AS tt ON t.term_id = tt.term_id "+
 		"WHERE tt.taxonomy = ?", "nav_menu")
 	if err != nil {
 		return nil, err
@@ -77,7 +77,7 @@ func (wp *WordPress) getMenuItems(q *ObjectQueryOptions) ([]*MenuItem, error) {
 	if q.MenuName != "" {
 		cacheKey += q.MenuName
 	} else {
-		cacheKey += "id_" + strconv.FormatInt(q.MenuId, 64);
+		cacheKey += "id_" + strconv.FormatInt(q.MenuId, 64)
 	}
 
 	if !wp.FlushCache {
@@ -162,7 +162,7 @@ func (wp *WordPress) getMenuItems(q *ObjectQueryOptions) ([]*MenuItem, error) {
 			mi.Target = target
 		}
 
-		if enc, ok := meta["_menu_item_classes"]; ok && enc != ""{
+		if enc, ok := meta["_menu_item_classes"]; ok && enc != "" {
 			if obj, err := phpserialize.Decode(enc); err == nil {
 				// its okay if we don't have the classes
 				if classes, ok := obj.(map[interface{}]interface{}); ok {
@@ -172,7 +172,7 @@ func (wp *WordPress) getMenuItems(q *ObjectQueryOptions) ([]*MenuItem, error) {
 						}
 					}
 
-					mi.Classes = mi.Classes[:len(mi.Classes) - 1]
+					mi.Classes = mi.Classes[:len(mi.Classes)-1]
 				}
 			}
 		}
@@ -217,8 +217,8 @@ func (wp *WordPress) getMenuItems(q *ObjectQueryOptions) ([]*MenuItem, error) {
 						var url string
 						pageId := mi.ObjectId
 						for pageId != 0 {
-							row := wp.db.QueryRow("SELECT post_title, post_name, post_parent " +
-								"FROM " + wp.table("posts") + " WHERE ID = ?", pageId)
+							row := wp.db.QueryRow("SELECT post_title, post_name, post_parent "+
+								"FROM "+wp.table("posts")+" WHERE ID = ?", pageId)
 
 							var t, n string
 							var parent int64
@@ -239,8 +239,8 @@ func (wp *WordPress) getMenuItems(q *ObjectQueryOptions) ([]*MenuItem, error) {
 
 						done <- nil
 					} else {
-						row := wp.db.QueryRow("SELECT YEAR(post_date), MONTH(post_date), post_title, post_name " +
-							"FROM " + wp.table("posts") + " WHERE ID = ?", mi.ObjectId)
+						row := wp.db.QueryRow("SELECT YEAR(post_date), MONTH(post_date), post_title, post_name "+
+							"FROM "+wp.table("posts")+" WHERE ID = ?", mi.ObjectId)
 
 						var year, month int
 						var title, slug string
@@ -279,7 +279,7 @@ func (wp *WordPress) getMenuItems(q *ObjectQueryOptions) ([]*MenuItem, error) {
 	sortMenuItems(ret)
 
 	for count > 0 {
-		if err := <- done; err != nil {
+		if err := <-done; err != nil {
 			return nil, err
 		}
 

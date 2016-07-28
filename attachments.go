@@ -10,11 +10,11 @@ type Attachment struct {
 
 	FileName string `json:"file_name"`
 
-	Width    int    `json:"width"`
-	Height   int    `json:"height"`
+	Width  int `json:"width"`
+	Height int `json:"height"`
 
-	Caption  string `json:"caption"`
-	AltText  string `json:"alt_text"`
+	Caption string `json:"caption"`
+	AltText string `json:"alt_text"`
 }
 
 // GetAttachments gets all attachment data from the database
@@ -69,7 +69,7 @@ func (wp *WordPress) GetAttachments(attachmentIds ...int64) ([]*Attachment, erro
 
 // QueryAttachments queries the database and returns all matching attachment ids
 func (wp *WordPress) QueryAttachments(q *ObjectQueryOptions) ([]int64, error) {
-	q.PostType = PostTypeAttachment;
+	q.PostType = PostTypeAttachment
 
 	return wp.QueryObjects(q)
 }

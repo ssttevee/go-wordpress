@@ -24,7 +24,7 @@ type CacheManager interface {
 	// SetMulti stores several items in the cache
 	//
 	// There is no indication of whether they all get stored
-	SetMulti(key[] string, src interface{}) error
+	SetMulti(key []string, src interface{}) error
 }
 
 func (wp *WordPress) cacheGet(key string, dst interface{}) error {

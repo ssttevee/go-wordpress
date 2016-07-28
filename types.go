@@ -1,8 +1,8 @@
 package wordpress
 
 import (
-	"strings"
 	"errors"
+	"strings"
 )
 
 // URLList represents a list of urls

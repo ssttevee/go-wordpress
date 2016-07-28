@@ -9,16 +9,16 @@ type Post struct {
 	Object
 
 	// The post's featured_media
-	FeaturedMediaId int64             `json:"featured_media,omitempty"`
+	FeaturedMediaId int64 `json:"featured_media,omitempty"`
 
 	// The post's categories
-	CategoryIds     []int64           `json:"categories"`
+	CategoryIds []int64 `json:"categories"`
 
 	// The post's tags
-	TagIds          []int64           `json:"tags"`
+	TagIds []int64 `json:"tags"`
 
 	// The post's metadata
-	Meta            map[string]string `json:"meta"`
+	Meta map[string]string `json:"meta"`
 }
 
 // GetPosts gets all post data from the database
@@ -79,7 +79,7 @@ func (wp *WordPress) GetPosts(postIds ...int64) ([]*Post, error) {
 	}
 
 	for ; counter > 0; counter-- {
-		if err := <- done; err != nil {
+		if err := <-done; err != nil {
 			return nil, err
 		}
 	}

@@ -11,16 +11,16 @@ const categoryCacheKey = "wp_category_%d"
 type Category struct {
 	Term
 
-	Link   string `json:"url"`
+	Link string `json:"url"`
 }
 
 // MarshalJSON marshals itself into json
 func (cat *Category) MarshalJSON() ([]byte, error) {
 	return json.Marshal(map[string]interface{}{
-		"id": cat.Id,
+		"id":     cat.Id,
 		"parent": cat.Parent,
-		"name": cat.Name,
-		"url": cat.Link})
+		"name":   cat.Name,
+		"url":    cat.Link})
 }
 
 // GetCategories gets all category data from the database
@@ -96,7 +96,7 @@ func (wp *WordPress) GetCategories(categoryIds ...int64) ([]*Category, error) {
 			c.Link = "/category/" + c.Slug
 		}
 
-		ret = append(ret ,&c)
+		ret = append(ret, &c)
 
 		// prepare for storing to cache
 		key := fmt.Sprintf(categoryCacheKey, c.Id)
@@ -109,7 +109,7 @@ func (wp *WordPress) GetCategories(categoryIds ...int64) ([]*Category, error) {
 	}
 
 	for ; counter > 0; counter-- {
-		if err := <- done; err != nil {
+		if err := <-done; err != nil {
 			return nil, err
 		}
 	}

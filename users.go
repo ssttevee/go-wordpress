@@ -1,27 +1,27 @@
 package wordpress
 
 import (
-	"time"
 	"crypto/md5"
-	"strings"
 	"fmt"
+	"strings"
+	"time"
 )
 
 const userCacheKey = "wp_user_%d"
 
 // User represents a WordPress user
 type User struct {
-	Id          int64     `json:"id"`
-	Slug        string    `json:"slug"`
+	Id   int64  `json:"id"`
+	Slug string `json:"slug"`
 
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
 
-	Email       string    `json:"-"` // don't leak my email info!! >:[
-	Gravatar    string    `json:"gravatar"`
-	Website     string    `json:"url"`
+	Email    string `json:"-"` // don't leak my email info!! >:[
+	Gravatar string `json:"gravatar"`
+	Website  string `json:"url"`
 
-	Registered  time.Time `json:"-"`
+	Registered time.Time `json:"-"`
 }
 
 // GetUsers gets all user data from the database
@@ -57,7 +57,6 @@ func (wp *WordPress) GetUsers(userIds ...int64) ([]*User, error) {
 		}
 	}
 
-
 	var params []interface{}
 	stmt := "SELECT u.ID, u.user_nicename, u.display_name, um.meta_value, u.user_email, u.user_url, u.user_registered " +
 		"FROM " + wp.table("users") + " AS u JOIN " + wp.table("usermeta") + " AS um ON um.user_id = u.ID " +
@@ -67,7 +66,7 @@ func (wp *WordPress) GetUsers(userIds ...int64) ([]*User, error) {
 		stmt += "?,"
 		params = append(params, userIds[index])
 	}
-	stmt = stmt[:len(stmt) - 1] + ") GROUP BY u.ID"
+	stmt = stmt[:len(stmt)-1] + ") GROUP BY u.ID"
 
 	rows, err := wp.db.Query(stmt, params...)
 	if err != nil {

@@ -9,12 +9,12 @@ import (
 
 // WordPress represents access to the WordPress database
 type WordPress struct {
-	db          *sql.DB
+	db *sql.DB
 
 	TablePrefix string
 
-	CacheMgr    CacheManager
-	FlushCache  bool
+	CacheMgr   CacheManager
+	FlushCache bool
 }
 
 // New creates and returns a new WordPress connection
@@ -23,9 +23,9 @@ func New(host, user, password, database string) (*WordPress, error) {
 		user += ":" + password
 	}
 
-	db, err := sql.Open("mysql", user + "@" + host + "/" + database + "?parseTime=true")
+	db, err := sql.Open("mysql", user+"@"+host+"/"+database+"?parseTime=true")
 	if err != nil {
-		return nil, err;
+		return nil, err
 	}
 
 	return &WordPress{db: db}, nil

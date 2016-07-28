@@ -9,15 +9,15 @@ import (
 type Tag struct {
 	Term
 
-	Link   string `json:"url"`
+	Link string `json:"url"`
 }
 
 // MarshalJSON marshals itself into json
 func (tag *Tag) MarshalJSON() ([]byte, error) {
 	return json.Marshal(map[string]interface{}{
-		"id": tag.Id,
+		"id":   tag.Id,
 		"name": tag.Name,
-		"url": tag.Link})
+		"url":  tag.Link})
 }
 
 // GetTags gets all tag data from the database
@@ -59,11 +59,11 @@ func (wp *WordPress) GetTags(categoryIds ...int64) ([]*Tag, error) {
 			t.Link = "/tag/" + t.Slug
 		}
 
-		ret = append(ret ,&t)
+		ret = append(ret, &t)
 	}
 
 	for ; counter > 0; counter-- {
-		if err := <- done; err != nil {
+		if err := <-done; err != nil {
 			return nil, err
 		}
 	}

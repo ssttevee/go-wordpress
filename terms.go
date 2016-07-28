@@ -1,60 +1,60 @@
 package wordpress
 
 import (
-	"strconv"
 	"fmt"
+	"strconv"
 )
 
 // Term represents a WordPress term
 type Term struct {
 	// Term ID.
-	Id          int64  `json:"id"`
+	Id int64 `json:"id"`
 
 	// The term's name.
-	Name        string `json:"name"`
+	Name string `json:"name"`
 
 	// The term's slug.
-	Slug        string `json:"slug"`
+	Slug string `json:"slug"`
 
 	// The term's term_group.
-	Group       int64  `json:"group"`
+	Group int64 `json:"group"`
 
 	// Term Taxonomy ID.
-	TaxonomyId  int64  `json:"-"`
+	TaxonomyId int64 `json:"-"`
 
 	// The term's taxonomy name.
-	Taxonomy    string `json:"taxonomy"`
+	Taxonomy string `json:"taxonomy"`
 
 	// The term's description.
 	Description string `json:"description"`
 
 	// ID of a term's parent term.
-	Parent      int64  `json:"parent"`
+	Parent int64 `json:"parent"`
 
 	// Cached object count for this term.
-	Count       int64  `json:"-"`
+	Count int64 `json:"-"`
 }
 
 // TermQueryOptions represents the available parameters for querying
 type TermQueryOptions struct {
-	Page          int        `param:"page"`
-	PerPage       int        `param:"per_page"`
+	Page    int `param:"page"`
+	PerPage int `param:"per_page"`
 
-	Id            int64      `param:"term_id"`
-	IdIn          []int64    `param:"term_id__in"`
-	IdNotIn       []int64    `param:"term_id__not_in"`
+	Id      int64   `param:"term_id"`
+	IdIn    []int64 `param:"term_id__in"`
+	IdNotIn []int64 `param:"term_id__not_in"`
 
-	Name          string     `param:"term_name"`
-	NameIn        []string   `param:"term_name__in"`
-	NameNotIn     []string   `param:"term_name__not_in"`
+	Name      string   `param:"term_name"`
+	NameIn    []string `param:"term_name__in"`
+	NameNotIn []string `param:"term_name__not_in"`
 
-	ObjectId      int64      `param:"object_id"`
-	ObjectIdIn    []int64    `param:"object_id__in"`
-	ObjectIdNotIn []int64    `param:"object_id__not_in"`
+	ObjectId      int64   `param:"object_id"`
+	ObjectIdIn    []int64 `param:"object_id__in"`
+	ObjectIdNotIn []int64 `param:"object_id__not_in"`
 
-	Slug          string     `param:"term_slug"`
-	SlugIn        []string   `param:"term_slug__in"`
-	SlugNotIn     []string   `param:"term_slug__not_in"`
+	Slug      string   `param:"term_slug"`
+	SlugIn    []string `param:"term_slug__in"`
+	SlugNotIn []string `param:"term_slug__not_in"`
 
 	Taxonomy      Taxonomy   `param:"taxonomy"`
 	TaxonomyIn    []Taxonomy `param:"taxonomy__in"`
@@ -101,7 +101,7 @@ func (wp *WordPress) GetTerms(termIds ...int64) ([]*Term, error) {
 		stmt += "?,"
 		params = append(params, termIds[index])
 	}
-	stmt = stmt[:len(stmt) - 1] + ")"
+	stmt = stmt[:len(stmt)-1] + ")"
 
 	rows, err := wp.db.Query(stmt, params...)
 	if err != nil {
@@ -272,15 +272,15 @@ func (wp *WordPress) QueryTerms(q *TermQueryOptions) ([]int64, error) {
 		limit := "LIMIT " + strconv.Itoa(perPage) + " "
 
 		if q.Page > 1 {
-			limit += "OFFSET " + strconv.Itoa(q.Page * perPage) + " "
+			limit += "OFFSET " + strconv.Itoa(q.Page*perPage) + " "
 		}
 
 		where += limit
 	}
 
-	where = where[:len(where) - 4]
+	where = where[:len(where)-4]
 
-	rows, err := wp.db.Query(stmt + where, params...)
+	rows, err := wp.db.Query(stmt+where, params...)
 	if err != nil {
 		return nil, err
 	}

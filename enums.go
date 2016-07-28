@@ -11,29 +11,29 @@ type PostStatus string
 
 const (
 	// PostStatusPublish is a published post
-	PostStatusPublish   PostStatus = "publish"
+	PostStatusPublish PostStatus = "publish"
 
 	// PostStatusFuture is a post which has been
 	// published but it's publish date is in the future
-	PostStatusFuture    PostStatus = "future"
+	PostStatusFuture PostStatus = "future"
 
 	// PostStatusDraft is a draft post
-	PostStatusDraft     PostStatus = "draft"
+	PostStatusDraft PostStatus = "draft"
 
 	// PostStatusPending is a post which is awaiting approval
-	PostStatusPending   PostStatus = "pending"
+	PostStatusPending PostStatus = "pending"
 
 	// PostStatusPrivate is a private post
-	PostStatusPrivate   PostStatus = "private"
+	PostStatusPrivate PostStatus = "private"
 
 	// PostStatusTrash is a post that was trashed
-	PostStatusTrash     PostStatus = "trash"
+	PostStatusTrash PostStatus = "trash"
 
 	// PostStatusAutoDraft is an auto-saved post
 	PostStatusAutoDraft PostStatus = "auto-draft"
 
 	// PostStatusInherit inherits its status from its parent
-	PostStatusInherit   PostStatus = "inherit"
+	PostStatusInherit PostStatus = "inherit"
 )
 
 // Scan formats incoming data from a sql database
@@ -58,19 +58,19 @@ type PostType string
 
 const (
 	// PostTypeAttachment is an attachment
-	PostTypeAttachment  PostType = "attachment"
+	PostTypeAttachment PostType = "attachment"
 
 	// PostTypeNavMenuItem is a menu item
 	PostTypeNavMenuItem PostType = "nav_menu_item"
 
 	// PostTypePage is a page
-	PostTypePage        PostType = "page"
+	PostTypePage PostType = "page"
 
 	// PostTypePost is a post
-	PostTypePost        PostType = "post"
+	PostTypePost PostType = "post"
 
 	// PostTypeRevision is a revision
-	PostTypeRevision    PostType = "revision"
+	PostTypeRevision PostType = "revision"
 )
 
 // Scan formats incoming data from a sql database
@@ -90,13 +90,13 @@ type MenuItemType string
 
 const (
 	// MenuItemTypePost is a link to a specific post or page
-	MenuItemTypePost     MenuItemType = "post_type"
+	MenuItemTypePost MenuItemType = "post_type"
 
 	// MenuItemTypeTaxonomy is a link to a category or post tag
 	MenuItemTypeTaxonomy MenuItemType = "taxonomy"
 
 	// MenuItemTypeCustom is a custom or external link
-	MenuItemTypeCustom   MenuItemType = "custom"
+	MenuItemTypeCustom MenuItemType = "custom"
 )
 
 // Taxonomy represents term taxonomy names
@@ -109,8 +109,8 @@ const (
 	TaxonomyCategory Taxonomy = "category"
 
 	// TaxonomyNavMenu is for menu locations
-	TaxonomyNavMenu  Taxonomy = "nav_menu"
+	TaxonomyNavMenu Taxonomy = "nav_menu"
 
 	// TaxonomyPostTag is for post tags
-	TaxonomyPostTag  Taxonomy = "post_tag"
+	TaxonomyPostTag Taxonomy = "post_tag"
 )

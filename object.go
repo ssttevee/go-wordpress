@@ -1,11 +1,11 @@
 package wordpress
 
 import (
-	"time"
-	"strings"
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
+	"time"
 )
 
 var regexpQuerySeparators = regexp.MustCompile("[,+~]")
@@ -16,146 +16,146 @@ var regexpQueryDelimiter = regexp.MustCompile("[^a-zA-Z]")
 // Not really a Post object, per se, since WP uses it for other things like pages and menu items.
 // However it's in the 'posts' table, so... whatever...
 type Object struct {
-	wp              *WordPress
+	wp *WordPress
 
 	// The post's ID
-	Id              int64      `json:"id"`
+	Id int64 `json:"id"`
 
 	// The post author's ID
-	AuthorId        int        `json:"author"`
+	AuthorId int `json:"author"`
 
 	// The post's local publication time.
-	Date            time.Time  `json:"date"`
+	Date time.Time `json:"date"`
 
 	// The post's GMT publication time.
-	DateGmt         time.Time  `json:"-"`
+	DateGmt time.Time `json:"-"`
 
 	// The post's content.
-	Content         string     `json:"content"`
+	Content string `json:"content"`
 
 	// The post's title.
-	Title           string     `json:"title"`
+	Title string `json:"title"`
 
 	// The post's excerpt.
-	Excerpt         string     `json:"excerpt"`
+	Excerpt string `json:"excerpt"`
 
 	// The post's status.
-	Status          PostStatus `json:"status"`
+	Status PostStatus `json:"status"`
 
 	// Whether comments are allowed.
-	CommentStatus   bool       `json:"comment_status"`
+	CommentStatus bool `json:"comment_status"`
 
 	// Whether pings are allowed.
-	PingStatus      bool       `json:"ping_status"`
+	PingStatus bool `json:"ping_status"`
 
 	// The post's password in plain text.
-	Password        string     `json:"-"`
+	Password string `json:"-"`
 
 	// The post's slug.
-	Name            string     `json:"slug"`
+	Name string `json:"slug"`
 
 	// URLs queued to be pinged.
-	ToPing          URLList    `json:"-"`
+	ToPing URLList `json:"-"`
 
 	// URLs that have been pinged.
-	Pinged          URLList    `json:"-"`
+	Pinged URLList `json:"-"`
 
 	// The post's local modified time.
-	Modified        time.Time  `json:"modified"`
+	Modified time.Time `json:"modified"`
 
 	// The post's GMT modified time.
-	ModifiedGmt     time.Time  `json:"-"`
+	ModifiedGmt time.Time `json:"-"`
 
 	// A utility field for post content.
-	ContentFiltered string     `json:"-"`
+	ContentFiltered string `json:"-"`
 
 	// The post's parent post.
-	ParentId        int        `json:"parent"`
+	ParentId int `json:"parent"`
 
 	// The post's unique identifier, not necessarily a URL, used as the feed GUID.
-	Guid            string     `json:"-"`
+	Guid string `json:"-"`
 
 	// A field used for ordering posts.
-	MenuOrder       int        `json:"-"`
+	MenuOrder int `json:"-"`
 
 	// The post's type. (i.e. post or page)
-	Type            string     `json:"type"`
+	Type string `json:"type"`
 
 	// An attachment's mime type.
-	MimeType        string     `json:"mime_type,omitempty"`
+	MimeType string `json:"mime_type,omitempty"`
 
 	// Cached comment count.
-	CommentCount    int        `json:"-"`
+	CommentCount int `json:"-"`
 }
 
 // ObjectQueryOptions represents the available parameters for querying
 //
 // Somewhat similar to WP's json plugin
 type ObjectQueryOptions struct {
-	Page              int        `param:"page"`
-	PerPage           int        `param:"per_page"`
+	Page    int `param:"page"`
+	PerPage int `param:"per_page"`
 
-	Order             string     `param:"order_by"`
-	OrderAscending    bool       `param:"order_asc"`
+	Order          string `param:"order_by"`
+	OrderAscending bool   `param:"order_asc"`
 
-	PostType          PostType   `param:"post_type"`
-	PostStatus        PostStatus `param:"post_status"`
+	PostType   PostType   `param:"post_type"`
+	PostStatus PostStatus `param:"post_status"`
 
-	Author            int64      `param:"author_id"`
-	AuthorIn          []int64    `param:"author_id__in"`
-	AuthorNotIn       []int64    `param:"author_id__not_in"`
+	Author      int64   `param:"author_id"`
+	AuthorIn    []int64 `param:"author_id__in"`
+	AuthorNotIn []int64 `param:"author_id__not_in"`
 
-	AuthorName        string     `param:"author_name"`
-	AuthorNameIn      []string   `param:"author_name__in"`
-	AuthorNameNotIn   []string   `param:"author_name__not_in"`
+	AuthorName      string   `param:"author_name"`
+	AuthorNameIn    []string `param:"author_name__in"`
+	AuthorNameNotIn []string `param:"author_name__not_in"`
 
-	Category          int64      `param:"category_id"`
-	CategoryAnd       []int64    `param:"category_id__and"`
-	CategoryIn        []int64    `param:"category_id__in"`
-	CategoryNotIn     []int64    `param:"category_id__not_in"`
+	Category      int64   `param:"category_id"`
+	CategoryAnd   []int64 `param:"category_id__and"`
+	CategoryIn    []int64 `param:"category_id__in"`
+	CategoryNotIn []int64 `param:"category_id__not_in"`
 
-	CategoryName      string     `param:"category_name"`
-	CategoryNameAnd   []string   `param:"category_name__and"`
-	CategoryNameIn    []string   `param:"category_name__in"`
-	CategoryNameNotIn []string   `param:"category_name__not_in"`
+	CategoryName      string   `param:"category_name"`
+	CategoryNameAnd   []string `param:"category_name__and"`
+	CategoryNameIn    []string `param:"category_name__in"`
+	CategoryNameNotIn []string `param:"category_name__not_in"`
 
-	MenuId            int64      `param:"menu_id"`
-	MenuIdAnd         []int64    `param:"menu_id__and_in"`
-	MenuIdIn          []int64    `param:"menu_id__in"`
-	MenuIdNotIn       []int64    `param:"menu_id__not_in"`
+	MenuId      int64   `param:"menu_id"`
+	MenuIdAnd   []int64 `param:"menu_id__and_in"`
+	MenuIdIn    []int64 `param:"menu_id__in"`
+	MenuIdNotIn []int64 `param:"menu_id__not_in"`
 
-	MenuName          string     `param:"menu_name"`
-	MenuNameAnd       []string   `param:"menu_name__and"`
-	MenuNameIn        []string   `param:"menu_name__in"`
-	MenuNameNotIn     []string   `param:"menu_name__not_in"`
+	MenuName      string   `param:"menu_name"`
+	MenuNameAnd   []string `param:"menu_name__and"`
+	MenuNameIn    []string `param:"menu_name__in"`
+	MenuNameNotIn []string `param:"menu_name__not_in"`
 
-	Name              string     `param:"post_name"`
-	NameIn            []string   `param:"post_name__in"`
-	NameNotIn         []string   `param:"post_name__not_in"`
+	Name      string   `param:"post_name"`
+	NameIn    []string `param:"post_name__in"`
+	NameNotIn []string `param:"post_name__not_in"`
 
-	Parent            int64      `param:"post_parent"`
-	ParentIn          []int64    `param:"post_parent__in"`
-	ParentNotIn       []int64    `param:"post_parent__not_in"`
+	Parent      int64   `param:"post_parent"`
+	ParentIn    []int64 `param:"post_parent__in"`
+	ParentNotIn []int64 `param:"post_parent__not_in"`
 
-	Post              int64      `param:"post_id"`
-	PostIn            []int64    `param:"post_id__in"`
-	PostNotIn         []int64    `param:"post_id__not_in"`
+	Post      int64   `param:"post_id"`
+	PostIn    []int64 `param:"post_id__in"`
+	PostNotIn []int64 `param:"post_id__not_in"`
 
-	TagId             int64      `param:"tag_id"`
-	TagIdAnd          []int64    `param:"tag_id__and"`
-	TagIdIn           []int64    `param:"tag_id__in"`
-	TagIdNotIn        []int64    `param:"tag_id__not_in"`
+	TagId      int64   `param:"tag_id"`
+	TagIdAnd   []int64 `param:"tag_id__and"`
+	TagIdIn    []int64 `param:"tag_id__in"`
+	TagIdNotIn []int64 `param:"tag_id__not_in"`
 
-	TagName           string     `param:"tag_name"`
-	TagNameAnd        []string   `param:"tag_name__and"`
-	TagNameIn         []string   `param:"tag_name__in"`
-	TagNameNotIn      []string   `param:"tag_name__not_in"`
+	TagName      string   `param:"tag_name"`
+	TagNameAnd   []string `param:"tag_name__and"`
+	TagNameIn    []string `param:"tag_name__in"`
+	TagNameNotIn []string `param:"tag_name__not_in"`
 
-	Query             string     `param:"q"`
+	Query string `param:"q"`
 
-	Day               int        `param:"day_of_month"`
-	Month             int        `param:"month_num"`
-	Year              int        `param:"year"`
+	Day   int `param:"day_of_month"`
+	Month int `param:"month_num"`
+	Year  int `param:"year"`
 }
 
 // GetMeta gets the object's metadata from the database
@@ -252,7 +252,7 @@ func (wp *WordPress) GetObjects(objectIds ...int64) ([]*Object, error) {
 		stmt += "?,"
 		params = append(params, objectIds[index])
 	}
-	stmt = stmt[:len(stmt) - 1] + ") "
+	stmt = stmt[:len(stmt)-1] + ") "
 
 	rows, err := wp.db.Query(stmt, params...)
 	if err != nil {
@@ -379,7 +379,7 @@ func (wp *WordPress) QueryObjects(q *ObjectQueryOptions) ([]int64, error) {
 		}
 		where += ")) AND "
 	}
-	
+
 	if q.Category > 0 {
 		where += "ID IN (" + termSearchSetup + "tt.taxonomy = 'category' AND t.term_id = ?) AND "
 		params = append(params, q.Category)
@@ -407,9 +407,9 @@ func (wp *WordPress) QueryObjects(q *ObjectQueryOptions) ([]int64, error) {
 	}
 
 	// TODO Actually implement categories with explicit parents
-	splitCategory := func (cat string) string {
+	splitCategory := func(cat string) string {
 		split := strings.Split(cat, "/")
-		return split[len(split) - 1]
+		return split[len(split)-1]
 	}
 
 	if q.CategoryName != "" {
@@ -472,7 +472,7 @@ func (wp *WordPress) QueryObjects(q *ObjectQueryOptions) ([]int64, error) {
 		}
 		where += ")) AND "
 	}
-	
+
 	if q.MenuId > 0 {
 		where += "ID IN (" + termSearchSetup + "tt.taxonomy = 'nav_menu' AND t.term_id = ?) AND "
 		params = append(params, q.MenuId)
@@ -652,7 +652,7 @@ func (wp *WordPress) QueryObjects(q *ObjectQueryOptions) ([]int64, error) {
 		}
 
 		if query != "" {
-			where += "(" + query[:len(query) - 4] + ") AND "
+			where += "(" + query[:len(query)-4] + ") AND "
 		}
 	}
 
@@ -674,7 +674,7 @@ func (wp *WordPress) QueryObjects(q *ObjectQueryOptions) ([]int64, error) {
 	if where == "WHERE " {
 		where = ""
 	} else {
-		where = where[:len(where) - 4]
+		where = where[:len(where)-4]
 	}
 
 	order := "ORDER BY `"
@@ -702,11 +702,11 @@ func (wp *WordPress) QueryObjects(q *ObjectQueryOptions) ([]int64, error) {
 		limit += "LIMIT " + strconv.Itoa(perPage) + " "
 
 		if q.Page > 1 {
-			limit += "OFFSET " + strconv.Itoa(q.Page * perPage) + " "
+			limit += "OFFSET " + strconv.Itoa(q.Page*perPage) + " "
 		}
 	}
 
-	rows, err := wp.db.Query(stmt + where + order + limit, params...)
+	rows, err := wp.db.Query(stmt+where+order+limit, params...)
 	if err != nil {
 		return nil, err
 	}

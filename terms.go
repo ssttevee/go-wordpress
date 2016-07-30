@@ -263,6 +263,8 @@ func (wp *WordPress) QueryTerms(q *TermQueryOptions) ([]int64, error) {
 		return []int64{}, nil
 	}
 
+	where = where[:len(where)-4]
+
 	perPage := q.PerPage
 	if perPage >= 0 {
 		if perPage == 0 {
@@ -277,8 +279,6 @@ func (wp *WordPress) QueryTerms(q *TermQueryOptions) ([]int64, error) {
 
 		where += limit
 	}
-
-	where = where[:len(where)-4]
 
 	rows, err := wp.db.Query(stmt+where, params...)
 	if err != nil {

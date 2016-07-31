@@ -5,6 +5,8 @@ import (
 	"strconv"
 )
 
+const termCacheKey = "wp_term_%d"
+
 // Term represents a WordPress term
 type Term struct {
 	// Term ID.
@@ -67,80 +69,58 @@ func (wp *WordPress) GetTerms(termIds ...int64) ([]*Term, error) {
 		return []*Term{}, nil
 	}
 
-	keys := make([]string, 0, len(termIds))
-	keyMap := make(map[string]int)
+	var ret []*Term
+	keyMap, _ := wp.cacheGetMulti(termCacheKey, termIds, &ret)
 
-	for index, id := range termIds {
-		key := fmt.Sprintf("wp_term_%d", id)
+	if len(keyMap) > 0 {
+		params := make([]interface{}, 0, len(keyMap))
+		stmt := "SELECT t.term_id, t.name, t.slug, t.term_group, tt.term_taxonomy_id, tt.taxonomy, tt.description, tt.parent, tt.count FROM " + wp.table("terms") + " AS t " +
+			"JOIN (" + wp.table("term_taxonomy") + " AS tt) ON tt.term_id = t.term_id WHERE t.term_id IN ("
+		for _, index := range keyMap {
+			stmt += "?,"
+			params = append(params, termIds[index])
+		}
+		stmt = stmt[:len(stmt)-1] + ")"
 
-		keys = append(keys, key)
-		keyMap[key] = index
-	}
+		rows, err := wp.db.Query(stmt, params...)
+		if err != nil {
+			return nil, fmt.Errorf("Term SQL query fail: %v", err)
+		}
 
-	ret := make([]*Term, len(termIds))
+		keys := make([]string, 0, len(keyMap))
+		toCache := make([]*Term, 0, len(keyMap))
 
-	if !wp.FlushCache {
-		cacheResults := make([]*Term, 0, len(termIds))
-		if keys, err := wp.cacheGetMulti(keys, &cacheResults); err == nil {
-			for i, key := range keys {
-				ret[keyMap[key]] = cacheResults[i]
+		for rows.Next() {
+			t := Term{}
 
-				delete(keyMap, key)
+			if err := rows.Scan(
+				&t.Id,
+				&t.Name,
+				&t.Slug,
+				&t.Group,
+				&t.TaxonomyId,
+				&t.Taxonomy,
+				&t.Description,
+				&t.Parent,
+				&t.Count); err != nil {
+				return nil, fmt.Errorf("Unable to read term data: %v", err)
 			}
+
+			// prepare for storing to cache
+			key := fmt.Sprintf(termCacheKey, t.Id)
+
+			keys = append(keys, key)
+			toCache = append(toCache, &t)
+
+			// insert into return set
+			ret[keyMap[key]] = &t
 		}
 
-		if len(keyMap) == 0 {
-			return ret, nil
-		}
+		// just let this run, no callback is needed
+		go func() {
+			_ = wp.cacheSetMulti(keys, toCache)
+		}()
 	}
-
-	params := make([]interface{}, 0, len(keyMap))
-	stmt := "SELECT t.term_id, t.name, t.slug, t.term_group, tt.term_taxonomy_id, tt.taxonomy, tt.description, tt.parent, tt.count FROM " + wp.table("terms") + " AS t " +
-		"JOIN (" + wp.table("term_taxonomy") + " AS tt) ON tt.term_id = t.term_id WHERE t.term_id IN ("
-	for _, index := range keyMap {
-		stmt += "?,"
-		params = append(params, termIds[index])
-	}
-	stmt = stmt[:len(stmt)-1] + ")"
-
-	rows, err := wp.db.Query(stmt, params...)
-	if err != nil {
-		return nil, fmt.Errorf("Term SQL query fail: %v", err)
-	}
-
-	keys = make([]string, 0, len(keyMap))
-	toCache := make([]*Term, 0, len(keyMap))
-
-	for rows.Next() {
-		t := Term{}
-
-		if err := rows.Scan(
-			&t.Id,
-			&t.Name,
-			&t.Slug,
-			&t.Group,
-			&t.TaxonomyId,
-			&t.Taxonomy,
-			&t.Description,
-			&t.Parent,
-			&t.Count); err != nil {
-			return nil, fmt.Errorf("Unable to read term data: %v", err)
-		}
-
-		// prepare for storing to cache
-		key := fmt.Sprintf("wp_term_%d", t.Id)
-
-		keys = append(keys, key)
-		toCache = append(toCache, &t)
-
-		// insert into return set
-		ret[keyMap[key]] = &t
-	}
-
-	// just let this run, no callback is needed
-	go func() {
-		wp.cacheSetMulti(keys, toCache)
-	}()
 
 	return ret, nil
 }

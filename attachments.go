@@ -1,8 +1,11 @@
 package wordpress
 
 import (
+	"fmt"
 	"github.com/wulijun/go-php-serialize/phpserialize"
 )
+
+const attachmentCacheKey = "wp_attachment_%d"
 
 // Attachment represents a WordPress attachment
 type Attachment struct {
@@ -24,44 +27,68 @@ func (wp *WordPress) GetAttachments(attachmentIds ...int64) ([]*Attachment, erro
 		return nil, err
 	}
 
-	ret := make([]*Attachment, 0, len(attachmentIds))
-	for _, obj := range objects {
-		a := &Attachment{Object: *obj}
+	var ret []*Attachment
+	keyMap, _ := wp.cacheGetMulti(attachmentCacheKey, attachmentIds, &ret)
 
-		meta, err := a.GetMeta("_wp_attachment_metadata")
-		if err != nil {
-			return nil, err
+	if len(keyMap) > 0 {
+		missedIds := make([]int64, 0, len(keyMap))
+		for _, index := range keyMap {
+			missedIds = append(missedIds, attachmentIds[index])
 		}
 
-		if enc, ok := meta["_wp_attachment_metadata"]; ok && enc != "" {
-			if dec, err := phpserialize.Decode(enc); err == nil {
-				if meta, ok := dec.(map[interface{}]interface{}); ok {
-					if file, ok := meta["file"].(string); ok {
-						a.FileName = file
-					}
+		keys := make([]string, 0, len(keyMap))
+		toCache := make([]*Attachment, 0, len(keyMap))
 
-					if width, ok := meta["width"].(int64); ok {
-						a.Width = int(width)
-					}
+		for _, obj := range objects {
+			a := Attachment{Object: *obj}
 
-					if height, ok := meta["height"].(int64); ok {
-						a.Height = int(height)
-					}
+			meta, err := a.GetMeta("_wp_attachment_metadata")
+			if err != nil {
+				return nil, err
+			}
 
-					if imageMeta, ok := meta["image_meta"].(map[interface{}]interface{}); ok {
-						if caption, ok := imageMeta["caption"].(string); ok {
-							a.Caption = caption
+			if enc, ok := meta["_wp_attachment_metadata"]; ok && enc != "" {
+				if dec, err := phpserialize.Decode(enc); err == nil {
+					if meta, ok := dec.(map[interface{}]interface{}); ok {
+						if file, ok := meta["file"].(string); ok {
+							a.FileName = file
 						}
 
-						if alt, ok := imageMeta["title"].(string); ok {
-							a.AltText = alt
+						if width, ok := meta["width"].(int64); ok {
+							a.Width = int(width)
+						}
+
+						if height, ok := meta["height"].(int64); ok {
+							a.Height = int(height)
+						}
+
+						if imageMeta, ok := meta["image_meta"].(map[interface{}]interface{}); ok {
+							if caption, ok := imageMeta["caption"].(string); ok {
+								a.Caption = caption
+							}
+
+							if alt, ok := imageMeta["title"].(string); ok {
+								a.AltText = alt
+							}
 						}
 					}
 				}
 			}
+
+			// prepare for storing to cache
+			key := fmt.Sprintf(attachmentCacheKey, a.Id)
+
+			keys = append(keys, key)
+			toCache = append(toCache, &a)
+
+			// insert into return set
+			ret[keyMap[key]] = &a
 		}
 
-		ret = append(ret, a)
+		// just let this run, no callback is needed
+		go func() {
+			_ = wp.cacheSetMulti(keys, toCache)
+		}()
 	}
 
 	return ret, nil

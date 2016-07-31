@@ -2,6 +2,8 @@ package wordpress
 
 import (
 	"errors"
+	"fmt"
+	"reflect"
 )
 
 // ErrMissedCache is returned when a key is not found in the cache
@@ -35,12 +37,56 @@ func (wp *WordPress) cacheGet(key string, dst interface{}) error {
 	return ErrMissedCache
 }
 
-func (wp *WordPress) cacheGetMulti(keys []string, dst interface{}) ([]string, error) {
-	if wp.CacheMgr != nil {
-		return wp.CacheMgr.GetMulti(keys, dst)
+// returns keyMap
+func (wp *WordPress) cacheGetMulti(keyFmt string, objectIds []int64, dst interface{}) (map[string]int, error) {
+	v := reflect.ValueOf(dst)
+
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
 	}
 
-	return []string{}, nil
+	if !v.CanAddr() {
+		panic("dst must be a pointer")
+	}
+
+	if v.Kind() != reflect.Slice {
+		panic("dst must point to a slice")
+	}
+
+	t := v.Type().Elem()
+
+	idsLen := len(objectIds)
+
+	keys := make([]string, 0, idsLen)
+	keyMap := make(map[string]int)
+
+	for index, id := range objectIds {
+		key := fmt.Sprintf(keyFmt, id)
+
+		keys = append(keys, key)
+		keyMap[key] = index
+	}
+
+	ret := reflect.MakeSlice(reflect.SliceOf(t), idsLen, idsLen)
+
+	if wp.CacheMgr != nil && !wp.FlushCache {
+		cacheResults := reflect.New(reflect.SliceOf(t))
+		keys, err := wp.CacheMgr.GetMulti(keys, cacheResults.Interface())
+		if err != nil {
+			return nil, err
+		}
+
+		cacheResults = cacheResults.Elem()
+		for i, key := range keys {
+			ret.Index(keyMap[key]).Set(cacheResults.Index(i))
+
+			delete(keyMap, key)
+		}
+	}
+
+	v.Set(ret)
+
+	return keyMap, nil
 }
 
 func (wp *WordPress) cacheSet(key string, dst interface{}) error {

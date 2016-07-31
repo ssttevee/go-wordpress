@@ -41,14 +41,16 @@ func (m *Memcache) Get(key string, dst interface{}) error {
 func (m *Memcache) GetMulti(keys []string, dst interface{}) ([]string, error) {
 	v := reflect.ValueOf(dst)
 
-	if v.Kind() != reflect.Ptr {
-		return nil, errors.New("wp memcache: dst must be a pointer")
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
 	}
 
-	v = reflect.ValueOf(dst).Elem()
+	if !v.CanAddr() {
+		panic("wp memcache: dst must be a pointer")
+	}
 
 	if v.Kind() != reflect.Slice {
-		return nil, errors.New("wp memcache: dst must be a pointer to a slice")
+		panic("wp memcache: dst must point to a slice")
 	}
 
 	t := v.Type().Elem()

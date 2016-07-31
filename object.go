@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+const objectCacheKey = "wp_object_%d"
+
 var regexpQuerySeparators = regexp.MustCompile("[,+~]")
 var regexpQueryDelimiter = regexp.MustCompile("[^a-zA-Z]")
 
@@ -216,103 +218,81 @@ func (wp *WordPress) GetObjects(objectIds ...int64) ([]*Object, error) {
 		return []*Object{}, nil
 	}
 
-	keys := make([]string, 0, len(objectIds))
-	keyMap := make(map[string]int)
+	var ret []*Object
+	keyMap, _ := wp.cacheGetMulti(objectCacheKey, objectIds, &ret)
 
-	for index, id := range objectIds {
-		key := fmt.Sprintf("wp_object_%d", id)
+	if len(keyMap) > 0 {
+		params := make([]interface{}, 0, len(keyMap))
+		stmt := "SELECT * FROM " + wp.table("posts") + " " +
+			"WHERE ID IN ("
+		for _, index := range keyMap {
+			stmt += "?,"
+			params = append(params, objectIds[index])
+		}
+		stmt = stmt[:len(stmt)-1] + ") "
 
-		keys = append(keys, key)
-		keyMap[key] = index
-	}
+		rows, err := wp.db.Query(stmt, params...)
+		if err != nil {
+			return nil, fmt.Errorf("GetObjects - Query: %v", err)
+		}
 
-	ret := make([]*Object, len(objectIds))
+		keys := make([]string, 0, len(keyMap))
+		toCache := make([]*Object, 0, len(keyMap))
 
-	if !wp.FlushCache {
-		cacheResults := make([]*Object, 0, len(objectIds))
-		if keys, err := wp.cacheGetMulti(keys, &cacheResults); err == nil {
-			for i, key := range keys {
-				cacheResults[i].wp = wp
+		for rows.Next() {
+			obj := Object{}
 
-				ret[keyMap[key]] = cacheResults[i]
+			var commentStatus, pingStatus string
 
-				delete(keyMap, key)
+			if err := rows.Scan(
+				&obj.Id,
+				&obj.AuthorId,
+				&obj.Date,
+				&obj.DateGmt,
+				&obj.Content,
+				&obj.Title,
+				&obj.Excerpt,
+				&obj.Status,
+				&commentStatus,
+				&pingStatus,
+				&obj.Password,
+				&obj.Name,
+				&obj.ToPing,
+				&obj.Pinged,
+				&obj.Modified,
+				&obj.ModifiedGmt,
+				&obj.ContentFiltered,
+				&obj.ParentId,
+				&obj.Guid,
+				&obj.MenuOrder,
+				&obj.Type,
+				&obj.MimeType,
+				&obj.CommentCount); err != nil {
+				return nil, fmt.Errorf("GetObjects - Scan: %v", err)
 			}
+
+			obj.CommentStatus = commentStatus == "open"
+			obj.PingStatus = pingStatus == "open"
+
+			// prepare for storing to cache
+			key := fmt.Sprintf(objectCacheKey, obj.Id)
+
+			keys = append(keys, key)
+			toCache = append(toCache, &obj)
+
+			// insert into return set
+			ret[keyMap[key]] = &obj
 		}
 
-		if len(keyMap) == 0 {
-			return ret, nil
-		}
+		// just let this run, no callback is needed
+		go func() {
+			_ = wp.cacheSetMulti(keys, toCache)
+		}()
 	}
 
-	params := make([]interface{}, 0, len(keyMap))
-	stmt := "SELECT * FROM " + wp.table("posts") + " " +
-		"WHERE ID IN ("
-	for _, index := range keyMap {
-		stmt += "?,"
-		params = append(params, objectIds[index])
-	}
-	stmt = stmt[:len(stmt)-1] + ") "
-
-	rows, err := wp.db.Query(stmt, params...)
-	if err != nil {
-		return nil, fmt.Errorf("GetObjects - Query: %v", err)
-	}
-
-	keys = make([]string, 0, len(keyMap))
-	toCache := make([]*Object, 0, len(keyMap))
-
-	for rows.Next() {
-		obj := Object{}
-
-		var commentStatus, pingStatus string
-
-		if err := rows.Scan(
-			&obj.Id,
-			&obj.AuthorId,
-			&obj.Date,
-			&obj.DateGmt,
-			&obj.Content,
-			&obj.Title,
-			&obj.Excerpt,
-			&obj.Status,
-			&commentStatus,
-			&pingStatus,
-			&obj.Password,
-			&obj.Name,
-			&obj.ToPing,
-			&obj.Pinged,
-			&obj.Modified,
-			&obj.ModifiedGmt,
-			&obj.ContentFiltered,
-			&obj.ParentId,
-			&obj.Guid,
-			&obj.MenuOrder,
-			&obj.Type,
-			&obj.MimeType,
-			&obj.CommentCount); err != nil {
-			return nil, fmt.Errorf("GetObjects - Scan: %v", err)
-		}
-
-		obj.CommentStatus = commentStatus == "open"
-		obj.PingStatus = pingStatus == "open"
-
-		// prepare for storing to cache
-		key := fmt.Sprintf("wp_object_%d", obj.Id)
-
-		keys = append(keys, key)
-		toCache = append(toCache, &obj)
-
-		// insert into return set
+	for _, obj := range ret {
 		obj.wp = wp
-
-		ret[keyMap[key]] = &obj
 	}
-
-	// just let this run, no callback is needed
-	go func() {
-		wp.cacheSetMulti(keys, toCache)
-	}()
 
 	return ret, nil
 }

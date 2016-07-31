@@ -287,7 +287,7 @@ func (wp *WordPress) getMenuItems(q *ObjectQueryOptions) ([]*MenuItem, error) {
 	}
 
 	go func() {
-		wp.cacheSet(cacheKey, &ret)
+		_ = wp.cacheSet(cacheKey, &ret)
 	}()
 
 	return ret, nil

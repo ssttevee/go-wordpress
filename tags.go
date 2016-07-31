@@ -5,6 +5,8 @@ import (
 	"fmt"
 )
 
+const tagCacheKey = "wp_tag_%d"
+
 // Tag represents a WordPress tag
 type Tag struct {
 	Term
@@ -21,51 +23,76 @@ func (tag *Tag) MarshalJSON() ([]byte, error) {
 }
 
 // GetTags gets all tag data from the database
-func (wp *WordPress) GetTags(categoryIds ...int64) ([]*Tag, error) {
-	if len(categoryIds) == 0 {
+func (wp *WordPress) GetTags(tagIds ...int64) ([]*Tag, error) {
+	if len(tagIds) == 0 {
 		return []*Tag{}, nil
 	}
 
-	terms, err := wp.GetTerms(categoryIds...)
-	if err != nil {
-		return nil, err
-	}
+	var ret []*Tag
+	keyMap, _ := wp.cacheGetMulti(tagCacheKey, tagIds, &ret)
 
-	counter := 0
-	done := make(chan error)
-
-	ret := make([]*Tag, 0, len(categoryIds))
-	for _, term := range terms {
-		t := Tag{Term: *term}
-
-		if t.Parent > 0 {
-			counter++
-			go func() {
-				parents, err := wp.GetTags(t.Parent)
-				if err != nil {
-					done <- err
-					return
-				}
-
-				if len(parents) == 0 {
-					done <- fmt.Errorf("parent category for %d not found: %d", t.Id, t.Parent)
-				}
-
-				t.Link = parents[0].Link + "/" + t.Slug
-
-				done <- nil
-			}()
-		} else {
-			t.Link = "/tag/" + t.Slug
+	if len(keyMap) > 0 {
+		missedIds := make([]int64, 0, len(keyMap))
+		for _, index := range keyMap {
+			missedIds = append(missedIds, tagIds[index])
 		}
 
-		ret = append(ret, &t)
-	}
-
-	for ; counter > 0; counter-- {
-		if err := <-done; err != nil {
+		terms, err := wp.GetTerms(tagIds...)
+		if err != nil {
 			return nil, err
 		}
+
+		counter := 0
+		done := make(chan error)
+
+		keys := make([]string, 0, len(keyMap))
+		toCache := make([]*Tag, 0, len(keyMap))
+
+		ret := make([]*Tag, 0, len(tagIds))
+		for _, term := range terms {
+			t := Tag{Term: *term}
+
+			if t.Parent > 0 {
+				counter++
+				go func() {
+					parents, err := wp.GetTags(t.Parent)
+					if err != nil {
+						done <- err
+						return
+					}
+
+					if len(parents) == 0 {
+						done <- fmt.Errorf("parent category for %d not found: %d", t.Id, t.Parent)
+					}
+
+					t.Link = parents[0].Link + "/" + t.Slug
+
+					done <- nil
+				}()
+			} else {
+				t.Link = "/tag/" + t.Slug
+			}
+
+			// prepare for storing to cache
+			key := fmt.Sprintf(tagCacheKey, t.Id)
+
+			keys = append(keys, key)
+			toCache = append(toCache, &t)
+
+			// insert into return set
+			ret[keyMap[key]] = &t
+		}
+
+		for ; counter > 0; counter-- {
+			if err := <-done; err != nil {
+				return nil, err
+			}
+		}
+
+		// just let this run, no callback is needed
+		go func() {
+			_ = wp.cacheSetMulti(keys, toCache)
+		}()
 	}
 
 	return ret, nil

@@ -1,8 +1,11 @@
 package wordpress
 
 import (
+	"fmt"
 	"strconv"
 )
+
+const postCacheKey = "wp_post_%d"
 
 // Post represents a WordPress post
 type Post struct {
@@ -27,61 +30,85 @@ func (wp *WordPress) GetPosts(postIds ...int64) ([]*Post, error) {
 		return []*Post{}, nil
 	}
 
-	objects, err := wp.GetObjects(postIds...)
-	if err != nil {
-		return nil, err
-	}
+	var ret []*Post
+	keyMap, _ := wp.cacheGetMulti(postCacheKey, postIds, &ret)
 
-	counter := 0
-	done := make(chan error)
+	if len(keyMap) > 0 {
+		missedIds := make([]int64, 0, len(keyMap))
+		for _, index := range keyMap {
+			missedIds = append(missedIds, postIds[index])
+		}
 
-	ret := make([]*Post, 0, len(postIds))
-	for _, obj := range objects {
-		p := &Post{Object: *obj}
-
-		counter++
-		go func() {
-			if meta, err := p.GetMeta(); err != nil {
-				done <- err
-			} else {
-				if thumbnailId, ok := meta["_thumbnail_id"]; ok {
-					p.FeaturedMediaId, _ = strconv.ParseInt(thumbnailId, 10, 64)
-					delete(meta, "_thumbnail_id")
-				}
-
-				p.Meta = meta
-
-				done <- nil
-			}
-		}()
-
-		counter++
-		go func() {
-			if ids, err := p.GetTaxonomy(TaxonomyCategory); err != nil {
-				done <- err
-			} else {
-				p.CategoryIds = ids
-				done <- nil
-			}
-		}()
-
-		counter++
-		go func() {
-			if ids, err := p.GetTaxonomy(TaxonomyPostTag); err != nil {
-				done <- err
-			} else {
-				p.TagIds = ids
-				done <- nil
-			}
-		}()
-
-		ret = append(ret, p)
-	}
-
-	for ; counter > 0; counter-- {
-		if err := <-done; err != nil {
+		objects, err := wp.GetObjects(postIds...)
+		if err != nil {
 			return nil, err
 		}
+
+		counter := 0
+		done := make(chan error)
+
+		keys := make([]string, 0, len(keyMap))
+		toCache := make([]*Post, 0, len(keyMap))
+
+		for _, obj := range objects {
+			p := Post{Object: *obj}
+
+			counter++
+			go func() {
+				if meta, err := p.GetMeta(); err != nil {
+					done <- err
+				} else {
+					if thumbnailId, ok := meta["_thumbnail_id"]; ok {
+						p.FeaturedMediaId, _ = strconv.ParseInt(thumbnailId, 10, 64)
+						delete(meta, "_thumbnail_id")
+					}
+
+					p.Meta = meta
+
+					done <- nil
+				}
+			}()
+
+			counter++
+			go func() {
+				if ids, err := p.GetTaxonomy(TaxonomyCategory); err != nil {
+					done <- err
+				} else {
+					p.CategoryIds = ids
+					done <- nil
+				}
+			}()
+
+			counter++
+			go func() {
+				if ids, err := p.GetTaxonomy(TaxonomyPostTag); err != nil {
+					done <- err
+				} else {
+					p.TagIds = ids
+					done <- nil
+				}
+			}()
+
+			// prepare for storing to cache
+			key := fmt.Sprintf(postCacheKey, p.Id)
+
+			keys = append(keys, key)
+			toCache = append(toCache, &p)
+
+			// insert into return set
+			ret[keyMap[key]] = &p
+		}
+
+		for ; counter > 0; counter-- {
+			if err := <-done; err != nil {
+				return nil, err
+			}
+		}
+
+		// just let this run, no callback is needed
+		go func() {
+			_ = wp.cacheSetMulti(keys, toCache)
+		}()
 	}
 
 	return ret, nil

@@ -11,16 +11,22 @@ import (
 	"time"
 )
 
+// Expiration is the how long things will be stored in the cache
+var Expiration = time.Minute * 15
+
+// Memcache is an adapter for using the app engine memcache with the wordpress package
 type Memcache struct {
 	c context.Context
-
-	Expiration time.Duration
 }
 
+// New creates a new memcache adapter
 func New(c context.Context) *Memcache {
-	return &Memcache{c, time.Minute * 15}
+	return &Memcache{c: c}
 }
 
+// Get retrieves single item from cache and stores it into dst
+//
+// If they key is missed, ErrMissedCache error is returned
 func (m *Memcache) Get(key string, dst interface{}) error {
 	item, err := memcache.Get(m.c, key)
 	if err == memcache.ErrCacheMiss {
@@ -38,6 +44,8 @@ func (m *Memcache) Get(key string, dst interface{}) error {
 	return nil
 }
 
+// GetMulti retrieves several items from the cache
+// into dst and returns the keys in the retrieved order
 func (m *Memcache) GetMulti(keys []string, dst interface{}) ([]string, error) {
 	v := reflect.ValueOf(dst)
 
@@ -91,6 +99,9 @@ func (m *Memcache) GetMulti(keys []string, dst interface{}) ([]string, error) {
 	return retKeys, nil
 }
 
+// Set stores a single item in the cache
+//
+// There is no indication of whether the item actually gets stored
 func (m *Memcache) Set(key string, src interface{}) error {
 	item := memcache.Item{Key: key}
 
@@ -101,11 +112,14 @@ func (m *Memcache) Set(key string, src interface{}) error {
 	}
 
 	item.Value = buf.Bytes()
-	item.Expiration = m.Expiration
+	item.Expiration = Expiration
 
 	return memcache.Set(m.c, &item)
 }
 
+// SetMulti stores several items in the cache
+//
+// There is no indication of whether they all get stored
 func (m *Memcache) SetMulti(keys []string, src interface{}) error {
 	v := reflect.ValueOf(src)
 
@@ -138,7 +152,7 @@ func (m *Memcache) SetMulti(keys []string, src interface{}) error {
 		}
 
 		item.Value = buf.Bytes()
-		item.Expiration = m.Expiration
+		item.Expiration = Expiration
 
 		items = append(items, &item)
 	}

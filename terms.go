@@ -176,6 +176,27 @@ func (wp *WordPress) QueryTerms(q *TermQueryOptions) ([]int64, error) {
 		where += ") AND "
 	}
 
+	if q.ParentId > 0 {
+		where += "tt.parent = ? AND "
+		params = append(params, q.ParentId)
+	} else if q.ParentIdIn != nil && len(q.ParentIdIn) > 0 {
+		where += "tt.parent IN (?"
+		params = append(params, q.ParentIdIn[0])
+		for _, parentId := range q.ParentIdIn[1:] {
+			where += ", ?"
+			params = append(params, parentId)
+		}
+		where += ") AND "
+	} else if q.ParentIdNotIn != nil && len(q.ParentIdNotIn) > 0 {
+		where += "tt.parent NOT IN (?"
+		params = append(params, q.ParentIdNotIn[0])
+		for _, parentId := range q.ParentIdNotIn[1:] {
+			where += ", ?"
+			params = append(params, parentId)
+		}
+		where += ") AND "
+	}
+
 	if q.Slug != "" {
 		where += "t.slug = ? AND "
 		params = append(params, q.Slug)

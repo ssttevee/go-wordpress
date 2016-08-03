@@ -52,26 +52,7 @@ func (wp *WordPress) GetTags(tagIds ...int64) ([]*Tag, error) {
 		for _, term := range terms {
 			t := Tag{Term: *term}
 
-			if t.Parent > 0 {
-				counter++
-				go func() {
-					parents, err := wp.GetTags(t.Parent)
-					if err != nil {
-						done <- err
-						return
-					}
-
-					if len(parents) == 0 {
-						done <- fmt.Errorf("parent category for %d not found: %d", t.Id, t.Parent)
-					}
-
-					t.Link = parents[0].Link + "/" + t.Slug
-
-					done <- nil
-				}()
-			} else {
-				t.Link = "/tag/" + t.Slug
-			}
+			t.Link = "/tag/" + t.Slug
 
 			// prepare for storing to cache
 			key := fmt.Sprintf(tagCacheKey, t.Id)

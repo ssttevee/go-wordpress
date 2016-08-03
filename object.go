@@ -360,38 +360,6 @@ func (wp *WordPress) QueryObjects(q *ObjectQueryOptions) ([]int64, error) {
 		where += ")) AND "
 	}
 
-	if q.Category > 0 {
-		where += "ID IN (" + termSearchSetup + "tt.taxonomy = 'category' AND t.term_id = ?) AND "
-		params = append(params, q.Category)
-	} else if q.CategoryAnd != nil && len(q.CategoryAnd) > 0 {
-		for _, categoryId := range q.CategoryAnd {
-			where += "ID IN (" + termSearchSetup + "tt.taxonomy = 'category' AND t.term_id = ?) AND "
-			params = append(params, categoryId)
-		}
-	} else if q.CategoryIn != nil && len(q.CategoryIn) > 0 {
-		where += "ID IN (" + termSearchSetup + "tt.taxonomy = 'category' AND t.term_id IN (?"
-		params = append(params, q.CategoryIn[0])
-		for _, categoryId := range q.CategoryIn[1:] {
-			where += ", ?"
-			params = append(params, categoryId)
-		}
-		where += ")) AND "
-	} else if q.CategoryNotIn != nil && len(q.CategoryNotIn) > 0 {
-		where += "ID NOT IN (" + termSearchSetup + "tt.taxonomy = 'category' AND t.term_id IN (?"
-		params = append(params, q.CategoryNotIn[0])
-		for _, categoryId := range q.CategoryNotIn[1:] {
-			where += ", ?"
-			params = append(params, categoryId)
-		}
-		where += ")) AND "
-	}
-
-	// TODO Actually implement categories with explicit parents
-	splitCategory := func(cat string) string {
-		split := strings.Split(cat, "/")
-		return split[len(split)-1]
-	}
-
 	if q.CategoryName != "" {
 		sortCategory := func(cat string) {
 			switch cat[:1] {
@@ -432,25 +400,85 @@ func (wp *WordPress) QueryObjects(q *ObjectQueryOptions) ([]int64, error) {
 
 	if q.CategoryNameAnd != nil && len(q.CategoryNameAnd) > 0 {
 		for _, categoryName := range q.CategoryNameAnd {
-			where += "ID IN (" + termSearchSetup + "tt.taxonomy = 'category' AND t.slug = ?) AND "
-			params = append(params, splitCategory(categoryName))
+			catId, _ := wp.GetCategoryIdBySlug(categoryName)
+			if catId == 0 {
+				return []int64{}, nil
+			}
+			q.CategoryAnd = append(q.CategoryAnd, catId)
 		}
 	} else if q.CategoryNameIn != nil && len(q.CategoryNameIn) > 0 {
-		where += "ID IN (" + termSearchSetup + "tt.taxonomy = 'category' AND t.slug IN (?"
-		params = append(params, splitCategory(q.CategoryNameIn[0]))
-		for _, categoryName := range q.CategoryNameIn[1:] {
-			where += ", ?"
-			params = append(params, splitCategory(categoryName))
+		for _, categoryName := range q.CategoryNameIn {
+			catId, _ := wp.GetCategoryIdBySlug(categoryName)
+			if catId == 0 {
+				return []int64{}, nil
+			}
+			q.CategoryIn = append(q.CategoryIn, catId)
 		}
-		where += ")) AND "
 	} else if q.CategoryNameNotIn != nil && len(q.CategoryNameNotIn) > 0 {
-		where += "ID NOT IN (" + termSearchSetup + "tt.taxonomy = 'category' AND t.slug IN (?"
-		params = append(params, q.CategoryNameNotIn[0])
-		for _, categoryName := range q.CategoryNameNotIn[1:] {
-			where += ", ?"
-			params = append(params, splitCategory(categoryName))
+		for _, categoryName := range q.CategoryNameNotIn {
+			catId, _ := wp.GetCategoryIdBySlug(categoryName)
+			if catId == 0 {
+				return []int64{}, nil
+			}
+			q.CategoryNotIn = append(q.CategoryNotIn, catId)
 		}
-		where += ")) AND "
+	}
+
+	if q.Category > 0 {
+		cat := &Category{Term: Term{wp: wp, Id: q.Category}}
+
+		ids, err := cat.GetChildrenIds()
+		if err != nil {
+			return nil, err
+		}
+
+		where += "ID IN (" + termSearchSetup + "tt.taxonomy = 'category' AND t.term_id IN ("
+		for _, categoryId := range ids {
+			where += "?,"
+			params = append(params, categoryId)
+		}
+		where = where[:len(where)-1] + ")) AND "
+	} else if q.CategoryAnd != nil && len(q.CategoryAnd) > 0 {
+		for _, categoryId := range q.CategoryAnd {
+			where += "ID IN (" + termSearchSetup + "tt.taxonomy = 'category' AND t.term_id = ?) AND "
+			params = append(params, categoryId)
+		}
+	} else if q.CategoryIn != nil && len(q.CategoryIn) > 0 {
+		for _, categoryId := range q.CategoryIn[:] {
+			cat := &Category{Term: Term{wp: wp, Id: categoryId}}
+
+			ids, err := cat.GetChildrenIds()
+			if err != nil {
+				return nil, err
+			}
+
+			q.CategoryIn = append(q.CategoryIn, ids...)
+		}
+
+		where += "ID IN (" + termSearchSetup + "tt.taxonomy = 'category' AND t.term_id IN ("
+		for _, categoryId := range q.CategoryIn {
+			where += "?,"
+			params = append(params, categoryId)
+		}
+		where = where[:len(where)-1] + ")) AND "
+	} else if q.CategoryNotIn != nil && len(q.CategoryNotIn) > 0 {
+		for _, categoryId := range q.CategoryNotIn[:] {
+			cat := &Category{Term: Term{wp: wp, Id: categoryId}}
+
+			ids, err := cat.GetChildrenIds()
+			if err != nil {
+				return nil, err
+			}
+
+			q.CategoryNotIn = append(q.CategoryNotIn, ids...)
+		}
+
+		where += "ID NOT IN (" + termSearchSetup + "tt.taxonomy = 'category' AND t.term_id IN (?"
+		for _, categoryId := range q.CategoryNotIn {
+			where += "?,"
+			params = append(params, categoryId)
+		}
+		where = where[:len(where)-1] + ")) AND "
 	}
 
 	if q.MenuId > 0 {

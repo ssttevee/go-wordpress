@@ -3,6 +3,8 @@ package wordpress
 import (
 	"encoding/json"
 	"fmt"
+	"database/sql"
+	"strings"
 )
 
 const categoryCacheKey = "wp_category_%d"
@@ -21,6 +23,75 @@ func (cat *Category) MarshalJSON() ([]byte, error) {
 		"parent": cat.Parent,
 		"name":   cat.Name,
 		"url":    cat.Link})
+}
+
+func (cat *Category) GetChildId(slug string) (int64, error) {
+	row := cat.wp.db.QueryRow("SELECT term_id FROM " + cat.wp.table("terms") + " as t " +
+		"JOIN " + cat.wp.table("term_taxonomy") + " as tt ON t.term_id = tt.term_id " +
+		"WHERE tt.parent = ? AND t.slug = ?", cat.Id, slug)
+
+	var id int64
+	if err := row.Scan(&id); err != nil && err != sql.ErrNoRows {
+		return 0, err
+	}
+
+	return id, nil
+}
+
+func (cat *Category) GetChildrenIds() ([]int64, error) {
+	ret := []int64{cat.Id}
+
+	ids := ret[:]
+	for len(ids) > 0 {
+		stmt := "SELECT term_id FROM " + cat.wp.table("term_taxonomy") + " WHERE parent IN ("
+		var params []interface{}
+		for _, id := range ids {
+			stmt += "?,"
+			params = append(params, id)
+		}
+
+		rows, err := cat.wp.db.Query(stmt[:len(stmt)-1] + ")", params...)
+		if err != nil {
+			return nil, err
+		}
+
+		ids = make([]int64, 0)
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, err
+			}
+
+			ids = append(ids, id)
+		}
+
+		ret = append(ret, ids...)
+	}
+
+	return ret, nil
+}
+
+func (wp *WordPress) GetCategoryIdBySlug(slug string) (int64, error) {
+	parts := strings.Split(slug, "/")
+
+	var catId int64 = 0
+	for _, part := range parts {
+		ids, err := wp.QueryTerms(&TermQueryOptions{
+			Taxonomy: TaxonomyCategory,
+			Slug: part,
+			ParentIdIn: []int64{catId}})
+		if err != nil {
+			return 0, err
+		}
+
+		if len(ids) == 0 {
+			return 0, nil
+		}
+
+		catId = ids[0]
+	}
+
+	return catId, nil
 }
 
 // GetCategories gets all category data from the database

@@ -9,6 +9,8 @@ const termCacheKey = "wp_term_%d"
 
 // Term represents a WordPress term
 type Term struct {
+	wp *WordPress
+
 	// Term ID.
 	Id int64 `json:"id"`
 
@@ -53,6 +55,10 @@ type TermQueryOptions struct {
 	ObjectId      int64   `param:"object_id"`
 	ObjectIdIn    []int64 `param:"object_id__in"`
 	ObjectIdNotIn []int64 `param:"object_id__not_in"`
+
+	ParentId      int64   `param:"parent_id"`
+	ParentIdIn    []int64 `param:"parent_id__in"`
+	ParentIdNotIn []int64 `param:"parent_id__not_in"`
 
 	Slug      string   `param:"term_slug"`
 	SlugIn    []string `param:"term_slug__in"`
@@ -122,15 +128,18 @@ func (wp *WordPress) GetTerms(termIds ...int64) ([]*Term, error) {
 		}()
 	}
 
+	for _, t := range ret {
+		t.wp = wp
+	}
+
 	return ret, nil
 }
 
 // QueryTerms queries the database and returns all matching term ids
 func (wp *WordPress) QueryTerms(q *TermQueryOptions) ([]int64, error) {
-	stmt := "SELECT DISTINCT t.term_id FROM " + wp.table("terms") + " AS t " +
-		"JOIN (" + wp.table("term_taxonomy") + " AS tt, " + wp.table("term_relationships") + " AS tr) " +
-		"ON tt.term_id = t.term_id AND tr.term_taxonomy_id = tt.term_taxonomy_id "
 	where := "WHERE "
+
+	var requireTaxonomy, requireRelationships bool
 
 	var params []interface{}
 
@@ -156,9 +165,13 @@ func (wp *WordPress) QueryTerms(q *TermQueryOptions) ([]int64, error) {
 	}
 
 	if q.ObjectId > 0 {
+		requireRelationships = true
+
 		where += "tr.object_id = ? AND "
 		params = append(params, q.ObjectId)
 	} else if q.ObjectIdIn != nil && len(q.ObjectIdIn) > 0 {
+		requireRelationships = true
+
 		where += "tr.object_id IN (?"
 		params = append(params, q.ObjectIdIn[0])
 		for _, objectId := range q.ObjectIdIn[1:] {
@@ -167,6 +180,8 @@ func (wp *WordPress) QueryTerms(q *TermQueryOptions) ([]int64, error) {
 		}
 		where += ") AND "
 	} else if q.ObjectIdNotIn != nil && len(q.ObjectIdNotIn) > 0 {
+		requireRelationships = true
+
 		where += "tr.object_id NOT IN (?"
 		params = append(params, q.ObjectIdNotIn[0])
 		for _, objectId := range q.ObjectIdNotIn[1:] {
@@ -177,9 +192,13 @@ func (wp *WordPress) QueryTerms(q *TermQueryOptions) ([]int64, error) {
 	}
 
 	if q.ParentId > 0 {
+		requireTaxonomy = true
+
 		where += "tt.parent = ? AND "
 		params = append(params, q.ParentId)
 	} else if q.ParentIdIn != nil && len(q.ParentIdIn) > 0 {
+		requireTaxonomy = true
+
 		where += "tt.parent IN (?"
 		params = append(params, q.ParentIdIn[0])
 		for _, parentId := range q.ParentIdIn[1:] {
@@ -188,6 +207,8 @@ func (wp *WordPress) QueryTerms(q *TermQueryOptions) ([]int64, error) {
 		}
 		where += ") AND "
 	} else if q.ParentIdNotIn != nil && len(q.ParentIdNotIn) > 0 {
+		requireTaxonomy = true
+
 		where += "tt.parent NOT IN (?"
 		params = append(params, q.ParentIdNotIn[0])
 		for _, parentId := range q.ParentIdNotIn[1:] {
@@ -219,9 +240,13 @@ func (wp *WordPress) QueryTerms(q *TermQueryOptions) ([]int64, error) {
 	}
 
 	if q.Taxonomy != "" {
+		requireTaxonomy = true
+
 		where += "tt.taxonomy = ? AND "
 		params = append(params, string(q.Taxonomy))
 	} else if q.TaxonomyIn != nil && len(q.TaxonomyIn) > 0 {
+		requireTaxonomy = true
+
 		where += "tt.taxonomy IN (?"
 		params = append(params, string(q.TaxonomyIn[0]))
 		for _, taxonomy := range q.TaxonomyIn[1:] {
@@ -230,6 +255,8 @@ func (wp *WordPress) QueryTerms(q *TermQueryOptions) ([]int64, error) {
 		}
 		where += ") AND "
 	} else if q.TaxonomyNotIn != nil && len(q.TaxonomyNotIn) > 0 {
+		requireTaxonomy = true
+
 		where += "tt.taxonomy NOT IN (?"
 		params = append(params, string(q.TaxonomyNotIn[0]))
 		for _, taxonomy := range q.TaxonomyNotIn[1:] {
@@ -279,6 +306,16 @@ func (wp *WordPress) QueryTerms(q *TermQueryOptions) ([]int64, error) {
 		}
 
 		where += limit
+	}
+
+	stmt := "SELECT DISTINCT t.term_id FROM " + wp.table("terms") + " AS t "
+
+	if requireTaxonomy || requireRelationships {
+		stmt += "JOIN " + wp.table("term_taxonomy") + " AS tt ON tt.term_id = t.term_id "
+	}
+
+	if requireRelationships {
+		stmt += "JOIN " + wp.table("term_relationships") + " AS tr ON tr.term_taxonomy_id = tt.term_taxonomy_id "
 	}
 
 	rows, err := wp.db.Query(stmt+where, params...)

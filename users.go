@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-const userCacheKey = "wp_user_%d"
+const CacheKeyUser = "wp_user_%d"
 
 // User represents a WordPress user
 type User struct {
@@ -31,7 +31,7 @@ func (wp *WordPress) GetUsers(userIds ...int64) ([]*User, error) {
 	}
 
 	var ret []*User
-	keyMap, _ := wp.cacheGetMulti(userCacheKey, userIds, &ret)
+	keyMap, _ := wp.cacheGetMulti(CacheKeyUser, userIds, &ret)
 
 	if len(keyMap) > 0 {
 		var params []interface{}
@@ -62,7 +62,7 @@ func (wp *WordPress) GetUsers(userIds ...int64) ([]*User, error) {
 			u.Gravatar = fmt.Sprintf("%x", md5.Sum([]byte(strings.ToLower(strings.TrimSpace(u.Email)))))
 
 			// prepare for storing to cache
-			key := fmt.Sprintf(userCacheKey, u.Id)
+			key := fmt.Sprintf(CacheKeyUser, u.Id)
 
 			keys = append(keys, key)
 			toCache = append(toCache, &u)

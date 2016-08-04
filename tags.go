@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-const tagCacheKey = "wp_tag_%d"
+const CacheKeyTag = "wp_tag_%d"
 
 // Tag represents a WordPress tag
 type Tag struct {
@@ -29,7 +29,7 @@ func (wp *WordPress) GetTags(tagIds ...int64) ([]*Tag, error) {
 	}
 
 	var ret []*Tag
-	keyMap, _ := wp.cacheGetMulti(tagCacheKey, tagIds, &ret)
+	keyMap, _ := wp.cacheGetMulti(CacheKeyTag, tagIds, &ret)
 
 	if len(keyMap) > 0 {
 		missedIds := make([]int64, 0, len(keyMap))
@@ -48,14 +48,13 @@ func (wp *WordPress) GetTags(tagIds ...int64) ([]*Tag, error) {
 		keys := make([]string, 0, len(keyMap))
 		toCache := make([]*Tag, 0, len(keyMap))
 
-		ret := make([]*Tag, 0, len(tagIds))
 		for _, term := range terms {
 			t := Tag{Term: *term}
 
 			t.Link = "/tag/" + t.Slug
 
 			// prepare for storing to cache
-			key := fmt.Sprintf(tagCacheKey, t.Id)
+			key := fmt.Sprintf(CacheKeyTag, t.Id)
 
 			keys = append(keys, key)
 			toCache = append(toCache, &t)

@@ -5,7 +5,7 @@ import (
 	"strconv"
 )
 
-const termCacheKey = "wp_term_%d"
+const CacheKeyTerm = "wp_term_%d"
 
 // Term represents a WordPress term
 type Term struct {
@@ -76,7 +76,7 @@ func (wp *WordPress) GetTerms(termIds ...int64) ([]*Term, error) {
 	}
 
 	var ret []*Term
-	keyMap, _ := wp.cacheGetMulti(termCacheKey, termIds, &ret)
+	keyMap, _ := wp.cacheGetMulti(CacheKeyTerm, termIds, &ret)
 
 	if len(keyMap) > 0 {
 		params := make([]interface{}, 0, len(keyMap))
@@ -113,7 +113,7 @@ func (wp *WordPress) GetTerms(termIds ...int64) ([]*Term, error) {
 			}
 
 			// prepare for storing to cache
-			key := fmt.Sprintf(termCacheKey, t.Id)
+			key := fmt.Sprintf(CacheKeyTerm, t.Id)
 
 			keys = append(keys, key)
 			toCache = append(toCache, &t)

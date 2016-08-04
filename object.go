@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-const objectCacheKey = "wp_object_%d"
+const CacheKeyObject = "wp_object_%d"
 
 var regexpQuerySeparators = regexp.MustCompile("[,+~]")
 var regexpQueryDelimiter = regexp.MustCompile("[^a-zA-Z]")
@@ -219,7 +219,7 @@ func (wp *WordPress) GetObjects(objectIds ...int64) ([]*Object, error) {
 	}
 
 	var ret []*Object
-	keyMap, _ := wp.cacheGetMulti(objectCacheKey, objectIds, &ret)
+	keyMap, _ := wp.cacheGetMulti(CacheKeyObject, objectIds, &ret)
 
 	if len(keyMap) > 0 {
 		params := make([]interface{}, 0, len(keyMap))
@@ -275,7 +275,7 @@ func (wp *WordPress) GetObjects(objectIds ...int64) ([]*Object, error) {
 			obj.PingStatus = pingStatus == "open"
 
 			// prepare for storing to cache
-			key := fmt.Sprintf(objectCacheKey, obj.Id)
+			key := fmt.Sprintf(CacheKeyObject, obj.Id)
 
 			keys = append(keys, key)
 			toCache = append(toCache, &obj)

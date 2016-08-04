@@ -5,7 +5,7 @@ import (
 	"github.com/wulijun/go-php-serialize/phpserialize"
 )
 
-const attachmentCacheKey = "wp_attachment_%d"
+const CacheKeyAttachment = "wp_attachment_%d"
 
 // Attachment represents a WordPress attachment
 type Attachment struct {
@@ -28,7 +28,7 @@ func (wp *WordPress) GetAttachments(attachmentIds ...int64) ([]*Attachment, erro
 	}
 
 	var ret []*Attachment
-	keyMap, _ := wp.cacheGetMulti(attachmentCacheKey, attachmentIds, &ret)
+	keyMap, _ := wp.cacheGetMulti(CacheKeyAttachment, attachmentIds, &ret)
 
 	if len(keyMap) > 0 {
 		missedIds := make([]int64, 0, len(keyMap))
@@ -76,7 +76,7 @@ func (wp *WordPress) GetAttachments(attachmentIds ...int64) ([]*Attachment, erro
 			}
 
 			// prepare for storing to cache
-			key := fmt.Sprintf(attachmentCacheKey, a.Id)
+			key := fmt.Sprintf(CacheKeyAttachment, a.Id)
 
 			keys = append(keys, key)
 			toCache = append(toCache, &a)

@@ -7,6 +7,8 @@ import (
 	"strconv"
 )
 
+const CacheKeyMenu = "wp_menu_%v"
+
 // MenuItem represents a WordPress menu item
 type MenuItem struct {
 	Id       int64 `json:"id"`
@@ -73,11 +75,11 @@ func (wp *WordPress) GetMenuBySlug(menuSlug string) ([]*MenuItem, error) {
 
 // getMenuItems is the most expensive operation in this package... use sparingly...
 func (wp *WordPress) getMenuItems(q *ObjectQueryOptions) ([]*MenuItem, error) {
-	cacheKey := "wp_menu_"
+	var cacheKey string
 	if q.MenuName != "" {
-		cacheKey += q.MenuName
+		cacheKey = fmt.Sprintf(CacheKeyMenu, q.MenuName)
 	} else {
-		cacheKey += "id_" + strconv.FormatInt(q.MenuId, 64)
+		cacheKey = fmt.Sprintf(CacheKeyMenu, q.MenuId)
 	}
 
 	if !wp.FlushCache {

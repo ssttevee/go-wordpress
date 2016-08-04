@@ -1,13 +1,13 @@
 package wordpress
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
-	"database/sql"
 	"strings"
 )
 
-const categoryCacheKey = "wp_category_%d"
+const CacheKeyCategory = "wp_category_%d"
 
 // Category represents a WordPress category
 type Category struct {
@@ -26,8 +26,8 @@ func (cat *Category) MarshalJSON() ([]byte, error) {
 }
 
 func (cat *Category) GetChildId(slug string) (int64, error) {
-	row := cat.wp.db.QueryRow("SELECT term_id FROM " + cat.wp.table("terms") + " as t " +
-		"JOIN " + cat.wp.table("term_taxonomy") + " as tt ON t.term_id = tt.term_id " +
+	row := cat.wp.db.QueryRow("SELECT term_id FROM "+cat.wp.table("terms")+" as t "+
+		"JOIN "+cat.wp.table("term_taxonomy")+" as tt ON t.term_id = tt.term_id "+
 		"WHERE tt.parent = ? AND t.slug = ?", cat.Id, slug)
 
 	var id int64
@@ -50,7 +50,7 @@ func (cat *Category) GetChildrenIds() ([]int64, error) {
 			params = append(params, id)
 		}
 
-		rows, err := cat.wp.db.Query(stmt[:len(stmt)-1] + ")", params...)
+		rows, err := cat.wp.db.Query(stmt[:len(stmt)-1]+")", params...)
 		if err != nil {
 			return nil, err
 		}
@@ -77,8 +77,8 @@ func (wp *WordPress) GetCategoryIdBySlug(slug string) (int64, error) {
 	var catId int64 = 0
 	for _, part := range parts {
 		ids, err := wp.QueryTerms(&TermQueryOptions{
-			Taxonomy: TaxonomyCategory,
-			Slug: part,
+			Taxonomy:   TaxonomyCategory,
+			Slug:       part,
 			ParentIdIn: []int64{catId}})
 		if err != nil {
 			return 0, err
@@ -101,7 +101,7 @@ func (wp *WordPress) GetCategories(categoryIds ...int64) ([]*Category, error) {
 	}
 
 	var ret []*Category
-	keyMap, _ := wp.cacheGetMulti(categoryCacheKey, categoryIds, &ret)
+	keyMap, _ := wp.cacheGetMulti(CacheKeyCategory, categoryIds, &ret)
 
 	if len(keyMap) > 0 {
 		missedIds := make([]int64, 0, len(keyMap))
@@ -134,6 +134,7 @@ func (wp *WordPress) GetCategories(categoryIds ...int64) ([]*Category, error) {
 
 					if len(parents) == 0 {
 						done <- fmt.Errorf("parent category for %d not found: %d", c.Id, c.Parent)
+						return
 					}
 
 					c.Link = parents[0].Link + "/" + c.Slug
@@ -145,7 +146,7 @@ func (wp *WordPress) GetCategories(categoryIds ...int64) ([]*Category, error) {
 			}
 
 			// prepare for storing to cache
-			key := fmt.Sprintf(categoryCacheKey, c.Id)
+			key := fmt.Sprintf(CacheKeyCategory, c.Id)
 
 			keys = append(keys, key)
 			toCache = append(toCache, &c)

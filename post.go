@@ -5,7 +5,7 @@ import (
 	"strconv"
 )
 
-const postCacheKey = "wp_post_%d"
+const CacheKeyPost = "wp_post_%d"
 
 // Post represents a WordPress post
 type Post struct {
@@ -31,7 +31,7 @@ func (wp *WordPress) GetPosts(postIds ...int64) ([]*Post, error) {
 	}
 
 	var ret []*Post
-	keyMap, _ := wp.cacheGetMulti(postCacheKey, postIds, &ret)
+	keyMap, _ := wp.cacheGetMulti(CacheKeyPost, postIds, &ret)
 
 	if len(keyMap) > 0 {
 		missedIds := make([]int64, 0, len(keyMap))
@@ -90,7 +90,7 @@ func (wp *WordPress) GetPosts(postIds ...int64) ([]*Post, error) {
 			}()
 
 			// prepare for storing to cache
-			key := fmt.Sprintf(postCacheKey, p.Id)
+			key := fmt.Sprintf(CacheKeyPost, p.Id)
 
 			keys = append(keys, key)
 			toCache = append(toCache, &p)

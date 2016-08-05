@@ -22,11 +22,6 @@ type Attachment struct {
 
 // GetAttachments gets all attachment data from the database
 func (wp *WordPress) GetAttachments(attachmentIds ...int64) ([]*Attachment, error) {
-	objects, err := wp.GetObjects(attachmentIds...)
-	if err != nil {
-		return nil, err
-	}
-
 	var ret []*Attachment
 	keyMap, _ := wp.cacheGetMulti(CacheKeyAttachment, attachmentIds, &ret)
 
@@ -34,6 +29,11 @@ func (wp *WordPress) GetAttachments(attachmentIds ...int64) ([]*Attachment, erro
 		missedIds := make([]int64, 0, len(keyMap))
 		for _, index := range keyMap {
 			missedIds = append(missedIds, attachmentIds[index])
+		}
+
+		objects, err := wp.GetObjects(attachmentIds...)
+		if err != nil {
+			return nil, err
 		}
 
 		keys := make([]string, 0, len(keyMap))
@@ -89,6 +89,10 @@ func (wp *WordPress) GetAttachments(attachmentIds ...int64) ([]*Attachment, erro
 		go func() {
 			_ = wp.cacheSetMulti(keys, toCache)
 		}()
+	}
+
+	for _, a := range ret {
+		a.wp = wp
 	}
 
 	return ret, nil

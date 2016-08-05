@@ -73,7 +73,7 @@ func (wp *WordPress) cacheGetMulti(keyFmt string, objectIds []int64, dst interfa
 		cacheResults := reflect.New(reflect.SliceOf(t))
 		keys, err := wp.CacheMgr.GetMulti(keys, cacheResults.Interface())
 		if err != nil {
-			return nil, err
+			return keyMap, err
 		}
 
 		cacheResults = cacheResults.Elem()

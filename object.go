@@ -719,7 +719,7 @@ func (wp *WordPress) QueryObjects(q *ObjectQueryOptions) ([]int64, error) {
 		return nil, err
 	}
 
-	var ret []int64
+	ret := make([]int64, 0)
 	for rows.Next() {
 		var id int64
 		if err := rows.Scan(&id); err != nil {

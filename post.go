@@ -63,6 +63,13 @@ func (wp *WordPress) GetPosts(postIds ...int64) ([]*Post, error) {
 						delete(meta, "_thumbnail_id")
 					}
 
+					// clear the internal use metadata
+					for metaKey := range meta {
+						if metaKey[0] == '_' {
+							delete(meta, metaKey)
+						}
+					}
+
 					p.Meta = meta
 
 					done <- nil

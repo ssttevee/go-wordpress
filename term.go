@@ -302,7 +302,7 @@ func (wp *WordPress) QueryTerms(q *TermQueryOptions) ([]int64, error) {
 		limit := "LIMIT " + strconv.Itoa(perPage) + " "
 
 		if q.Page > 1 {
-			limit += "OFFSET " + strconv.Itoa(q.Page*perPage) + " "
+			limit += "OFFSET " + strconv.Itoa((q.Page-1)*perPage) + " "
 		}
 
 		where += limit

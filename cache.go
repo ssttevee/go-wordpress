@@ -57,13 +57,13 @@ func (wp *WordPress) cacheGetMulti(keyFmt string, objectIds []int64, dst interfa
 
 	idsLen := len(objectIds)
 
-	keys := make([]string, 0, idsLen)
+	keys := make([]string, idsLen)
 	keyMap := make(map[string]int)
 
 	for index, id := range objectIds {
 		key := fmt.Sprintf(keyFmt, id)
 
-		keys = append(keys, key)
+		keys[index] = key
 		keyMap[key] = index
 	}
 
@@ -71,13 +71,13 @@ func (wp *WordPress) cacheGetMulti(keyFmt string, objectIds []int64, dst interfa
 
 	if wp.CacheMgr != nil && !wp.FlushCache {
 		cacheResults := reflect.New(reflect.SliceOf(t))
-		keys, err := wp.CacheMgr.GetMulti(keys, cacheResults.Interface())
+		foundKeys, err := wp.CacheMgr.GetMulti(keys, cacheResults.Interface())
 		if err != nil {
 			return keyMap, err
 		}
 
 		cacheResults = cacheResults.Elem()
-		for i, key := range keys {
+		for i, key := range foundKeys {
 			v.Index(keyMap[key]).Set(cacheResults.Index(i))
 
 			delete(keyMap, key)

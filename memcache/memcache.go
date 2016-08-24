@@ -68,11 +68,6 @@ func (m *Memcache) GetMulti(keys []string, dst interface{}) ([]string, error) {
 		return nil, err
 	}
 
-	keyMap := make(map[string]int)
-	for i, key := range keys {
-		keyMap[key] = i
-	}
-
 	retKeys := make([]string, 0, len(items))
 	for _, item := range items {
 		var nv reflect.Value
@@ -93,7 +88,6 @@ func (m *Memcache) GetMulti(keys []string, dst interface{}) ([]string, error) {
 
 		retKeys = append(retKeys, item.Key)
 		v.Set(reflect.Append(v, nv))
-		delete(keyMap, item.Key)
 	}
 
 	return retKeys, nil

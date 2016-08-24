@@ -31,7 +31,7 @@ func (wp *WordPress) GetAttachments(attachmentIds ...int64) ([]*Attachment, erro
 			missedIds = append(missedIds, attachmentIds[index])
 		}
 
-		objects, err := wp.GetObjects(attachmentIds...)
+		objects, err := wp.GetObjects(missedIds...)
 		if err != nil {
 			return nil, err
 		}

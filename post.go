@@ -39,7 +39,7 @@ func (wp *WordPress) GetPosts(postIds ...int64) ([]*Post, error) {
 			missedIds = append(missedIds, postIds[index])
 		}
 
-		objects, err := wp.GetObjects(postIds...)
+		objects, err := wp.GetObjects(missedIds...)
 		if err != nil {
 			return nil, err
 		}

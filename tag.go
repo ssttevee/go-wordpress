@@ -37,7 +37,7 @@ func (wp *WordPress) GetTags(tagIds ...int64) ([]*Tag, error) {
 			missedIds = append(missedIds, tagIds[index])
 		}
 
-		terms, err := wp.GetTerms(tagIds...)
+		terms, err := wp.GetTerms(missedIds...)
 		if err != nil {
 			return nil, err
 		}

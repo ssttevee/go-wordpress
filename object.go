@@ -295,11 +295,16 @@ func (wp *WordPress) GetObjects(objectIds ...int64) ([]*Object, error) {
 		}()
 	}
 
-	for _, obj := range ret {
-		obj.wp = wp
+	var err MissingResourcesError
+	for i, obj := range ret {
+		if obj == nil {
+			err = append(err, objectIds[i])
+		} else {
+			obj.wp = wp
+		}
 	}
 
-	return ret, nil
+	return ret, err
 }
 
 // QueryObjects queries the database and returns all matching object ids

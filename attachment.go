@@ -104,11 +104,16 @@ func (wp *WordPress) GetAttachments(attachmentIds ...int64) ([]*Attachment, erro
 		go wp.cacheSetMulti(keys, toCache)
 	}
 
-	for _, a := range ret {
-		a.wp = wp
+	var err MissingResourcesError
+	for i, att := range ret {
+		if att == nil {
+			err = append(err, attachmentIds[i])
+		} else {
+			att.wp = wp
+		}
 	}
 
-	return ret, nil
+	return ret, err
 }
 
 // QueryAttachments queries the database and returns all matching attachment ids

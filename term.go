@@ -128,11 +128,16 @@ func (wp *WordPress) GetTerms(termIds ...int64) ([]*Term, error) {
 		}()
 	}
 
-	for _, t := range ret {
-		t.wp = wp
+	var err MissingResourcesError
+	for i, term := range ret {
+		if term == nil {
+			err = append(err, termIds[i])
+		} else {
+			term.wp = wp
+		}
 	}
 
-	return ret, nil
+	return ret, err
 }
 
 // QueryTerms queries the database and returns all matching term ids

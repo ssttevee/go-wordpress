@@ -16,6 +16,8 @@ type WordPress struct {
 
 	CacheMgr   CacheManager
 	FlushCache bool
+
+	filters map[string][]interface{}
 }
 
 // New creates and returns a new WordPress connection
@@ -29,7 +31,7 @@ func New(host, user, password, database string) (*WordPress, error) {
 		return nil, err
 	}
 
-	return &WordPress{db: db}, nil
+	return &WordPress{db: db, filters: make(map[string][]interface{})}, nil
 }
 
 // Database returns a pointer to the database connection
@@ -48,6 +50,10 @@ func (wp *WordPress) Close() error {
 
 func (wp *WordPress) table(table string) string {
 	return wp.TablePrefix + table
+}
+
+func (wp *WordPress) AddFilter(hook string, function interface{}) {
+	wp.filters[hook] = append(wp.filters[hook], function)
 }
 
 const CacheKeyOption = "wp_option_%s"

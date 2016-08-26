@@ -24,6 +24,9 @@ type Post struct {
 	Meta map[string]string `json:"meta"`
 }
 
+const FilterAfterGetPosts = "after_get_posts"
+type FilterAfterGetPostsFunc func(*WordPress, []*Post) ([]*Post, error)
+
 // GetPosts gets all post data from the database
 func (wp *WordPress) GetPosts(postIds ...int64) ([]*Post, error) {
 	if len(postIds) == 0 {
@@ -100,7 +103,6 @@ func (wp *WordPress) GetPosts(postIds ...int64) ([]*Post, error) {
 			key := fmt.Sprintf(CacheKeyPost, p.Id)
 
 			keys = append(keys, key)
-			toCache = append(toCache, &p)
 
 			// insert into return set
 			ret[keyMap[key]] = &p
@@ -110,6 +112,22 @@ func (wp *WordPress) GetPosts(postIds ...int64) ([]*Post, error) {
 			if err := <-done; err != nil {
 				return nil, err
 			}
+		}
+
+		for _, filter := range wp.filters[FilterAfterGetPosts] {
+			f, ok := filter.(FilterAfterGetPostsFunc)
+			if !ok {
+				panic("got a bad filter for '" + FilterAfterGetPosts + "'")
+			}
+
+			ret, err = f(wp, ret)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		for _, key := range keys {
+			toCache = append(toCache, ret[keyMap[key]])
 		}
 
 		// just let this run, no callback is needed

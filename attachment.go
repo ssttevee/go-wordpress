@@ -22,6 +22,9 @@ type Attachment struct {
 	Url string `json:"url,omitempty"`
 }
 
+const FilterAfterGetAttachments = "after_get_attachments"
+type FilterAfterGetAttachmentsFunc func(*WordPress, []*Attachment) ([]*Attachment, error)
+
 // GetAttachments gets all attachment data from the database
 func (wp *WordPress) GetAttachments(attachmentIds ...int64) ([]*Attachment, error) {
 	var ret []*Attachment
@@ -94,10 +97,25 @@ func (wp *WordPress) GetAttachments(attachmentIds ...int64) ([]*Attachment, erro
 			key := fmt.Sprintf(CacheKeyAttachment, a.Id)
 
 			keys = append(keys, key)
-			toCache = append(toCache, &a)
 
 			// insert into return set
 			ret[keyMap[key]] = &a
+		}
+
+		for _, key := range keys {
+			toCache = append(toCache, ret[keyMap[key]])
+		}
+
+		for _, filter := range wp.filters[FilterAfterGetAttachments] {
+			f, ok := filter.(FilterAfterGetAttachmentsFunc)
+			if !ok {
+				panic("got a bad filter for '" + FilterAfterGetAttachments + "'")
+			}
+
+			ret, err = f(wp, ret)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		// just let this run, no callback is needed

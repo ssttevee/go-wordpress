@@ -304,7 +304,11 @@ func (wp *WordPress) GetObjects(objectIds ...int64) ([]*Object, error) {
 		}
 	}
 
-	return ret, err
+	if len(err) > 0 {
+		return nil, err
+	}
+
+	return ret, nil
 }
 
 // QueryObjects queries the database and returns all matching object ids

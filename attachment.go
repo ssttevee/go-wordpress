@@ -131,7 +131,11 @@ func (wp *WordPress) GetAttachments(attachmentIds ...int64) ([]*Attachment, erro
 		}
 	}
 
-	return ret, err
+	if len(err) > 0 {
+		return nil, err
+	}
+
+	return ret, nil
 }
 
 // QueryAttachments queries the database and returns all matching attachment ids

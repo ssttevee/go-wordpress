@@ -8,8 +8,11 @@ import (
 type MissingResourcesError []int64
 
 func (ids MissingResourcesError) Error() string {
-	var msg bytes.Buffer
+	if len(ids) == 0 {
+		return ""
+	}
 
+	var msg bytes.Buffer
 	msg.WriteString("wordpress: could not find ids ")
 	for _, id := range ids[:len(ids)-1] {
 		msg.WriteString(strconv.FormatInt(id, 10))

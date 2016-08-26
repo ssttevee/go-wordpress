@@ -5,6 +5,7 @@ import (
 
 	// WordPress needs mysql
 	_ "github.com/go-sql-driver/mysql"
+	"fmt"
 )
 
 // WordPress represents access to the WordPress database
@@ -47,4 +48,26 @@ func (wp *WordPress) Close() error {
 
 func (wp *WordPress) table(table string) string {
 	return wp.TablePrefix + table
+}
+
+const CacheKeyOption = "wp_option_%s"
+func (wp *WordPress) GetOption(name string) (value string, err error) {
+	key := fmt.Sprintf(CacheKeyOption, name)
+	if wp.CacheMgr != nil && !wp.FlushCache {
+		if wp.cacheGet(key, &value); value != "" {
+			return value, nil
+		}
+	}
+
+	if err = wp.db.QueryRow(
+		"SELECT option_value FROM " + wp.table("options") + " WHERE option_name = ?",
+		name).Scan(&value); err != nil {
+		return "", err
+	}
+
+	if wp.CacheMgr != nil {
+		go wp.CacheMgr.Set(name, value)
+	}
+
+	return value, nil
 }

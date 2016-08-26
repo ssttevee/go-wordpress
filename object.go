@@ -131,6 +131,11 @@ type ObjectQueryOptions struct {
 	MenuNameIn    []string `param:"menu_name__in"`
 	MenuNameNotIn []string `param:"menu_name__not_in"`
 
+	Meta      string   `param:"meta"`
+	MetaAnd   []string `param:"meta__and"`
+	MetaIn    []string `param:"meta__in"`
+	MetaNotIn []string `param:"meta__not_in"`
+
 	Name      string   `param:"post_name"`
 	NameIn    []string `param:"post_name__in"`
 	NameNotIn []string `param:"post_name__not_in"`
@@ -531,6 +536,42 @@ func (wp *WordPress) QueryObjects(q *ObjectQueryOptions) ([]int64, error) {
 			params = append(params, menuName)
 		}
 		where += ")) AND "
+	}
+
+	var searchMeta = func(metas ...string) (where string) {
+		where = "ID "
+		if metas[0] == "is not in" {
+			where += "NOT "
+			metas = metas[1:]
+
+			if len(metas) == 0 {
+				return ""
+			}
+		}
+		where += "IN (SELECT DISTINCT post_id FROM " + wp.table("postmeta") + " WHERE "
+		for _, meta := range metas {
+			where += "("
+			if equal := strings.IndexRune(meta, '='); equal != -1 {
+				where += "meta_value = ? AND "
+				params = append(params, meta[equal + 1:])
+				meta = meta[:equal]
+			}
+			where += "meta_key = ?) OR "
+			params = append(params, meta)
+		}
+		return where[:len(where)-4] + ") AND "
+	}
+
+	if q.Meta != "" {
+		where += searchMeta(q.Meta)
+	} else if len(q.MetaAnd) > 0 {
+		for _, meta := range q.MetaAnd {
+			where += searchMeta(meta)
+		}
+	} else if len(q.MetaIn) > 0 {
+		where += searchMeta(q.MetaIn...)
+	} else if len(q.MetaNotIn) > 0 {
+		where += searchMeta(append([]string{"is not in"}, q.MetaNotIn...)...)
 	}
 
 	if q.Name != "" {

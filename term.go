@@ -137,7 +137,11 @@ func (wp *WordPress) GetTerms(termIds ...int64) ([]*Term, error) {
 		}
 	}
 
-	return ret, err
+	if len(err) > 0 {
+		return nil, err
+	}
+
+	return ret, nil
 }
 
 // QueryTerms queries the database and returns all matching term ids

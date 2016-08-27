@@ -105,8 +105,8 @@ func (wp *WordPress) GetCategories(categoryIds ...int64) ([]*Category, error) {
 
 	if len(keyMap) > 0 {
 		missedIds := make([]int64, 0, len(keyMap))
-		for _, index := range keyMap {
-			missedIds = append(missedIds, categoryIds[index])
+		for _, indices := range keyMap {
+			missedIds = append(missedIds, categoryIds[indices[0]])
 		}
 
 		terms, err := wp.GetTerms(missedIds...)
@@ -116,9 +116,6 @@ func (wp *WordPress) GetCategories(categoryIds ...int64) ([]*Category, error) {
 
 		counter := 0
 		done := make(chan error)
-
-		keys := make([]string, 0, len(keyMap))
-		toCache := make([]*Category, 0, len(keyMap))
 
 		for _, term := range terms {
 			c := Category{Term: *term}
@@ -145,14 +142,10 @@ func (wp *WordPress) GetCategories(categoryIds ...int64) ([]*Category, error) {
 				c.Link = "/category/" + c.Slug
 			}
 
-			// prepare for storing to cache
-			key := fmt.Sprintf(CacheKeyCategory, c.Id)
-
-			keys = append(keys, key)
-			toCache = append(toCache, &c)
-
 			// insert into return set
-			ret[keyMap[key]] = &c
+			for _, index := range keyMap[fmt.Sprintf(CacheKeyCategory, c.Id)] {
+				ret[index] = &c
+			}
 		}
 
 		for ; counter > 0; counter-- {
@@ -162,9 +155,7 @@ func (wp *WordPress) GetCategories(categoryIds ...int64) ([]*Category, error) {
 		}
 
 		// just let this run, no callback is needed
-		go func() {
-			_ = wp.cacheSetMulti(keys, toCache)
-		}()
+		go wp.cacheSetByKeyMap(keyMap, ret)
 	}
 
 	return ret, nil

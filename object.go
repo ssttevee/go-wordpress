@@ -230,9 +230,9 @@ func (wp *WordPress) GetObjects(objectIds ...int64) ([]*Object, error) {
 		params := make([]interface{}, 0, len(keyMap))
 		stmt := "SELECT * FROM " + wp.table("posts") + " " +
 			"WHERE ID IN ("
-		for _, index := range keyMap {
+		for _, indices := range keyMap {
 			stmt += "?,"
-			params = append(params, objectIds[index])
+			params = append(params, objectIds[indices[0]])
 		}
 		stmt = stmt[:len(stmt)-1] + ") "
 
@@ -240,9 +240,6 @@ func (wp *WordPress) GetObjects(objectIds ...int64) ([]*Object, error) {
 		if err != nil {
 			return nil, fmt.Errorf("GetObjects - Query: %v", err)
 		}
-
-		keys := make([]string, 0, len(keyMap))
-		toCache := make([]*Object, 0, len(keyMap))
 
 		for rows.Next() {
 			obj := Object{}
@@ -282,17 +279,14 @@ func (wp *WordPress) GetObjects(objectIds ...int64) ([]*Object, error) {
 			// prepare for storing to cache
 			key := fmt.Sprintf(CacheKeyObject, obj.Id)
 
-			keys = append(keys, key)
-			toCache = append(toCache, &obj)
-
 			// insert into return set
-			ret[keyMap[key]] = &obj
+			for _, index := range keyMap[key] {
+				ret[index] = &obj
+			}
 		}
 
 		// just let this run, no callback is needed
-		go func() {
-			_ = wp.cacheSetMulti(keys, toCache)
-		}()
+		go wp.cacheSetByKeyMap(keyMap, ret)
 	}
 
 	var err MissingResourcesError

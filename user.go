@@ -39,9 +39,9 @@ func (wp *WordPress) GetUsers(userIds ...int64) ([]*User, error) {
 			"FROM " + wp.table("users") + " AS u JOIN " + wp.table("usermeta") + " AS um ON um.user_id = u.ID " +
 			"WHERE um.meta_key = ? AND u.ID IN ("
 		params = append(params, "description")
-		for _, index := range keyMap {
+		for _, indices := range keyMap {
 			stmt += "?,"
-			params = append(params, userIds[index])
+			params = append(params, userIds[indices[0]])
 		}
 		stmt = stmt[:len(stmt)-1] + ") GROUP BY u.ID"
 
@@ -49,9 +49,6 @@ func (wp *WordPress) GetUsers(userIds ...int64) ([]*User, error) {
 		if err != nil {
 			return nil, err
 		}
-
-		keys := make([]string, 0, len(keyMap))
-		toCache := make([]*User, 0, len(keyMap))
 
 		for rows.Next() {
 			var u User
@@ -61,20 +58,14 @@ func (wp *WordPress) GetUsers(userIds ...int64) ([]*User, error) {
 
 			u.Gravatar = fmt.Sprintf("%x", md5.Sum([]byte(strings.ToLower(strings.TrimSpace(u.Email)))))
 
-			// prepare for storing to cache
-			key := fmt.Sprintf(CacheKeyUser, u.Id)
-
-			keys = append(keys, key)
-			toCache = append(toCache, &u)
-
 			// insert into return set
-			ret[keyMap[key]] = &u
+			for _, index := range keyMap[fmt.Sprintf(CacheKeyUser, u.Id)] {
+				ret[index] = &u
+			}
 		}
 
 		// just let this run, no callback is needed
-		go func() {
-			_ = wp.cacheSetMulti(keys, toCache)
-		}()
+		go wp.cacheSetByKeyMap(keyMap, ret)
 	}
 
 	return ret, nil

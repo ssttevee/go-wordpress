@@ -38,8 +38,8 @@ func (wp *WordPress) GetPosts(postIds ...int64) ([]*Post, error) {
 
 	if len(keyMap) > 0 {
 		missedIds := make([]int64, 0, len(keyMap))
-		for _, index := range keyMap {
-			missedIds = append(missedIds, postIds[index])
+		for _, indices := range keyMap {
+			missedIds = append(missedIds, postIds[indices[0]])
 		}
 
 		objects, err := wp.GetObjects(missedIds...)
@@ -49,9 +49,6 @@ func (wp *WordPress) GetPosts(postIds ...int64) ([]*Post, error) {
 
 		counter := 0
 		done := make(chan error)
-
-		keys := make([]string, 0, len(keyMap))
-		toCache := make([]*Post, 0, len(keyMap))
 
 		for _, obj := range objects {
 			p := Post{Object: *obj}
@@ -99,13 +96,10 @@ func (wp *WordPress) GetPosts(postIds ...int64) ([]*Post, error) {
 				}
 			}()
 
-			// prepare for storing to cache
-			key := fmt.Sprintf(CacheKeyPost, p.Id)
-
-			keys = append(keys, key)
-
 			// insert into return set
-			ret[keyMap[key]] = &p
+			for _, index := range keyMap[fmt.Sprintf(CacheKeyPost, p.Id)] {
+				ret[index] = &p
+			}
 		}
 
 		for ; counter > 0; counter-- {
@@ -126,14 +120,8 @@ func (wp *WordPress) GetPosts(postIds ...int64) ([]*Post, error) {
 			}
 		}
 
-		for _, key := range keys {
-			toCache = append(toCache, ret[keyMap[key]])
-		}
-
 		// just let this run, no callback is needed
-		go func() {
-			_ = wp.cacheSetMulti(keys, toCache)
-		}()
+		go wp.cacheSetByKeyMap(keyMap, ret)
 	}
 
 	return ret, nil

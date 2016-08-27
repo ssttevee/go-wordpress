@@ -38,7 +38,7 @@ func (wp *WordPress) cacheGet(key string, dst interface{}) error {
 }
 
 // returns keyMap
-func (wp *WordPress) cacheGetMulti(keyFmt string, objectIds []int64, dst interface{}) (map[string]int, error) {
+func (wp *WordPress) cacheGetMulti(keyFmt string, objectIds []int64, dst interface{}) (map[string][]int, error) {
 	v := reflect.ValueOf(dst)
 
 	if v.Kind() == reflect.Ptr {
@@ -58,13 +58,16 @@ func (wp *WordPress) cacheGetMulti(keyFmt string, objectIds []int64, dst interfa
 	idsLen := len(objectIds)
 
 	keys := make([]string, idsLen)
-	keyMap := make(map[string]int)
+	keyMap := make(map[string][]int)
 
 	for index, id := range objectIds {
 		key := fmt.Sprintf(keyFmt, id)
 
-		keys[index] = key
-		keyMap[key] = index
+		if _, ok := keyMap[key]; !ok {
+			keys[index] = key
+		}
+
+		keyMap[key] = append(keyMap[key], index)
 	}
 
 	v.Set(reflect.MakeSlice(reflect.SliceOf(t), idsLen, idsLen))
@@ -78,7 +81,9 @@ func (wp *WordPress) cacheGetMulti(keyFmt string, objectIds []int64, dst interfa
 
 		cacheResults = cacheResults.Elem()
 		for i, key := range foundKeys {
-			v.Index(keyMap[key]).Set(cacheResults.Index(i))
+			for _, index := range keyMap[key] {
+				v.Index(index).Set(cacheResults.Index(i))
+			}
 
 			delete(keyMap, key)
 		}
@@ -98,6 +103,38 @@ func (wp *WordPress) cacheSet(key string, dst interface{}) error {
 func (wp *WordPress) cacheSetMulti(keys []string, dst interface{}) error {
 	if wp.CacheMgr != nil {
 		return wp.CacheMgr.SetMulti(keys, dst)
+	}
+
+	return nil
+}
+
+func (wp *WordPress) cacheSetByKeyMap(keyMap map[string][]int, ret interface{}) error {
+	v := reflect.ValueOf(ret)
+
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+
+	if v.Kind() != reflect.Slice {
+		panic("ret must be an array")
+	}
+
+	keys := make([]string, 0, len(keyMap))
+	src := reflect.MakeSlice(v.Type(), 0, len(keyMap))
+	for key, indices := range keyMap {
+		index := indices[0]
+		if index >= v.Len() {
+			continue
+		}
+
+		if obj := v.Index(index); !obj.IsNil() {
+			keys = append(keys, key)
+			src = reflect.Append(src, obj)
+		}
+	}
+
+	if wp.CacheMgr != nil {
+		return wp.CacheMgr.SetMulti(keys, src.Interface())
 	}
 
 	return nil

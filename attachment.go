@@ -32,17 +32,14 @@ func (wp *WordPress) GetAttachments(attachmentIds ...int64) ([]*Attachment, erro
 
 	if len(keyMap) > 0 {
 		missedIds := make([]int64, 0, len(keyMap))
-		for _, index := range keyMap {
-			missedIds = append(missedIds, attachmentIds[index])
+		for _, indices := range keyMap {
+			missedIds = append(missedIds, attachmentIds[indices[0]])
 		}
 
 		objects, err := wp.GetObjects(missedIds...)
 		if err != nil {
 			return nil, err
 		}
-
-		keys := make([]string, 0, len(keyMap))
-		toCache := make([]*Attachment, 0, len(keyMap))
 
 		baseUrl, _ := wp.GetOption("upload_url_path")
 		if baseUrl == "" {
@@ -93,17 +90,10 @@ func (wp *WordPress) GetAttachments(attachmentIds ...int64) ([]*Attachment, erro
 
 			a.Url = baseUrl + a.Date.Format("/2006/01/") + a.FileName
 
-			// prepare for storing to cache
-			key := fmt.Sprintf(CacheKeyAttachment, a.Id)
-
-			keys = append(keys, key)
-
 			// insert into return set
-			ret[keyMap[key]] = &a
-		}
-
-		for _, key := range keys {
-			toCache = append(toCache, ret[keyMap[key]])
+			for _, index := range keyMap[fmt.Sprintf(CacheKeyAttachment, a.Id)] {
+				ret[index] = &a
+			}
 		}
 
 		for _, filter := range wp.filters[FilterAfterGetAttachments] {
@@ -119,7 +109,7 @@ func (wp *WordPress) GetAttachments(attachmentIds ...int64) ([]*Attachment, erro
 		}
 
 		// just let this run, no callback is needed
-		go wp.cacheSetMulti(keys, toCache)
+		go wp.cacheSetByKeyMap(keyMap, ret)
 	}
 
 	var err MissingResourcesError

@@ -82,9 +82,9 @@ func (wp *WordPress) GetTerms(termIds ...int64) ([]*Term, error) {
 		params := make([]interface{}, 0, len(keyMap))
 		stmt := "SELECT t.term_id, t.name, t.slug, t.term_group, tt.term_taxonomy_id, tt.taxonomy, tt.description, tt.parent, tt.count FROM " + wp.table("terms") + " AS t " +
 			"JOIN (" + wp.table("term_taxonomy") + " AS tt) ON tt.term_id = t.term_id WHERE t.term_id IN ("
-		for _, index := range keyMap {
+		for _, indices := range keyMap {
 			stmt += "?,"
-			params = append(params, termIds[index])
+			params = append(params, termIds[indices[0]])
 		}
 		stmt = stmt[:len(stmt)-1] + ")"
 
@@ -92,9 +92,6 @@ func (wp *WordPress) GetTerms(termIds ...int64) ([]*Term, error) {
 		if err != nil {
 			return nil, fmt.Errorf("Term SQL query fail: %v", err)
 		}
-
-		keys := make([]string, 0, len(keyMap))
-		toCache := make([]*Term, 0, len(keyMap))
 
 		for rows.Next() {
 			t := Term{}
@@ -112,20 +109,14 @@ func (wp *WordPress) GetTerms(termIds ...int64) ([]*Term, error) {
 				return nil, fmt.Errorf("Unable to read term data: %v", err)
 			}
 
-			// prepare for storing to cache
-			key := fmt.Sprintf(CacheKeyTerm, t.Id)
-
-			keys = append(keys, key)
-			toCache = append(toCache, &t)
-
 			// insert into return set
-			ret[keyMap[key]] = &t
+			for _, index := range keyMap[fmt.Sprintf(CacheKeyTerm, t.Id)] {
+				ret[index] = &t
+			}
 		}
 
 		// just let this run, no callback is needed
-		go func() {
-			_ = wp.cacheSetMulti(keys, toCache)
-		}()
+		go wp.cacheSetByKeyMap(keyMap, ret)
 	}
 
 	var err MissingResourcesError

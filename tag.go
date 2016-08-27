@@ -33,8 +33,8 @@ func (wp *WordPress) GetTags(tagIds ...int64) ([]*Tag, error) {
 
 	if len(keyMap) > 0 {
 		missedIds := make([]int64, 0, len(keyMap))
-		for _, index := range keyMap {
-			missedIds = append(missedIds, tagIds[index])
+		for _, indices := range keyMap {
+			missedIds = append(missedIds, tagIds[indices[0]])
 		}
 
 		terms, err := wp.GetTerms(missedIds...)
@@ -45,22 +45,15 @@ func (wp *WordPress) GetTags(tagIds ...int64) ([]*Tag, error) {
 		counter := 0
 		done := make(chan error)
 
-		keys := make([]string, 0, len(keyMap))
-		toCache := make([]*Tag, 0, len(keyMap))
-
 		for _, term := range terms {
 			t := Tag{Term: *term}
 
 			t.Link = "/tag/" + t.Slug
 
-			// prepare for storing to cache
-			key := fmt.Sprintf(CacheKeyTag, t.Id)
-
-			keys = append(keys, key)
-			toCache = append(toCache, &t)
-
 			// insert into return set
-			ret[keyMap[key]] = &t
+			for _, index := range keyMap[fmt.Sprintf(CacheKeyTag, t.Id)] {
+				ret[index] = &t
+			}
 		}
 
 		for ; counter > 0; counter-- {
@@ -70,9 +63,7 @@ func (wp *WordPress) GetTags(tagIds ...int64) ([]*Tag, error) {
 		}
 
 		// just let this run, no callback is needed
-		go func() {
-			_ = wp.cacheSetMulti(keys, toCache)
-		}()
+		go wp.cacheSetByKeyMap(keyMap, ret)
 	}
 
 	return ret, nil

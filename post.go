@@ -24,9 +24,6 @@ type Post struct {
 	Meta map[string]string `json:"meta"`
 }
 
-const FilterAfterGetPosts = "after_get_posts"
-type FilterAfterGetPostsFunc func(*WordPress, []*Post) ([]*Post, error)
-
 // GetPosts gets all post data from the database
 func (wp *WordPress) GetPosts(postIds ...int64) ([]*Post, error) {
 	if len(postIds) == 0 {
@@ -108,13 +105,8 @@ func (wp *WordPress) GetPosts(postIds ...int64) ([]*Post, error) {
 			}
 		}
 
-		for _, filter := range wp.filters[FilterAfterGetPosts] {
-			f, ok := filter.(FilterAfterGetPostsFunc)
-			if !ok {
-				panic("got a bad filter for '" + FilterAfterGetPosts + "'")
-			}
-
-			ret, err = f(wp, ret)
+		for _, filter := range filters.AfterGetPosts {
+			ret, err = filter(wp, ret)
 			if err != nil {
 				return nil, err
 			}

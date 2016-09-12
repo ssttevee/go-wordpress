@@ -22,9 +22,6 @@ type Attachment struct {
 	Url string `json:"url,omitempty"`
 }
 
-const FilterAfterGetAttachments = "after_get_attachments"
-type FilterAfterGetAttachmentsFunc func(*WordPress, []*Attachment) ([]*Attachment, error)
-
 // GetAttachments gets all attachment data from the database
 func (wp *WordPress) GetAttachments(attachmentIds ...int64) ([]*Attachment, error) {
 	var ret []*Attachment
@@ -96,13 +93,9 @@ func (wp *WordPress) GetAttachments(attachmentIds ...int64) ([]*Attachment, erro
 			}
 		}
 
-		for _, filter := range wp.filters[FilterAfterGetAttachments] {
-			f, ok := filter.(FilterAfterGetAttachmentsFunc)
-			if !ok {
-				panic("got a bad filter for '" + FilterAfterGetAttachments + "'")
-			}
+		for _, filter := range filters.AfterGetAttachments {
 
-			ret, err = f(wp, ret)
+			ret, err = filter(wp, ret)
 			if err != nil {
 				return nil, err
 			}

@@ -50,6 +50,10 @@ func (wp *WordPress) table(table string) string {
 	return wp.TablePrefix + table
 }
 
+func (wp *WordPress) Clone() *WordPress {
+	return &WordPress{db: wp.db, TablePrefix: wp.TablePrefix, CacheMgr: wp.CacheMgr, FlushCache: wp.FlushCache}
+}
+
 const CacheKeyOption = "wp_option_%s"
 func (wp *WordPress) GetOption(name string) (value string, err error) {
 	key := fmt.Sprintf(CacheKeyOption, name)

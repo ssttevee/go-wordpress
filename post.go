@@ -105,6 +105,13 @@ func (wp *WordPress) GetPosts(postIds ...int64) ([]*Post, error) {
 			}
 		}
 
+		for _, filter := range filters.AfterGetPosts {
+			ret, err = filter(wp, ret)
+			if err != nil {
+				return nil, err
+			}
+		}
+
 		// just let this run, no callback is needed
 		go wp.cacheSetByKeyMap(keyMap, ret)
 	}

@@ -93,6 +93,14 @@ func (wp *WordPress) GetAttachments(attachmentIds ...int64) ([]*Attachment, erro
 			}
 		}
 
+		for _, filter := range filters.AfterGetAttachments {
+
+			ret, err = filter(wp, ret)
+			if err != nil {
+				return nil, err
+			}
+		}
+
 		// just let this run, no callback is needed
 		go wp.cacheSetByKeyMap(keyMap, ret)
 	}

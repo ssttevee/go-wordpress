@@ -19,7 +19,7 @@ func (ids MissingResourcesError) Error() string {
 		msg.WriteRune(',')
 		msg.WriteRune(' ')
 	}
-	msg.Truncate(msg.Len()-2)
+	msg.Truncate(msg.Len() - 2)
 	if len(ids) > 1 {
 		msg.WriteString(" and")
 	}

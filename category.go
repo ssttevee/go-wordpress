@@ -1,13 +1,15 @@
 package wordpress
 
 import (
+	"cloud.google.com/go/trace"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/elgris/sqrl"
+	"golang.org/x/net/context"
 	"strings"
 )
-
-const CacheKeyCategory = "wp_category_%d"
 
 // Category represents a WordPress category
 type Category struct {
@@ -25,37 +27,51 @@ func (cat *Category) MarshalJSON() ([]byte, error) {
 		"url":    cat.Link})
 }
 
-func (cat *Category) GetChildId(slug string) (int64, error) {
-	row := cat.wp.db.QueryRow("SELECT term_id FROM "+cat.wp.table("terms")+" as t "+
-		"JOIN "+cat.wp.table("term_taxonomy")+" as tt ON t.term_id = tt.term_id "+
-		"WHERE tt.parent = ? AND t.slug = ?", cat.Id, slug)
+// GetChildId returns the category id of the child looked up by it's slug
+func (cat *Category) GetChildId(c context.Context, slug string) (int64, error) {
+	span := trace.FromContext(c).NewChild("/wordpress.Category.GetChildId")
+	defer span.Finish()
+
+	stmt, args, err := sqrl.Select("term_id").
+		From(table(c, "terms") + " AS t").
+		Join(table(c, "term_taxonomy") + " AS tt ON t.term_id = tt.term_id").
+		Where(sqrl.Eq{"tt.parent": cat.Id, "t.slug": slug}).ToSql()
+	if err != nil {
+		return 0, err
+	}
+
+	span.SetLabel("wp/query", stmt)
 
 	var id int64
-	if err := row.Scan(&id); err != nil && err != sql.ErrNoRows {
-		return 0, err
+	if err := database(c).QueryRow(stmt, args...).Scan(&id); err != nil && err != sql.ErrNoRows {
+		return 0, nil
 	}
 
 	return id, nil
 }
 
-func (cat *Category) GetChildrenIds() ([]int64, error) {
+// GetChildrenIds returns all the ids of the category and it's children
+func (cat *Category) GetChildrenIds(c context.Context) ([]int64, error) {
+	span := trace.FromContext(c).NewChild("/wordpress.Category.GetChildrenIds")
+	defer span.Finish()
+
 	ret := []int64{cat.Id}
 
 	ids := ret[:]
 	for len(ids) > 0 {
-		stmt := "SELECT term_id FROM " + cat.wp.table("term_taxonomy") + " WHERE parent IN ("
-		var params []interface{}
-		for _, id := range ids {
-			stmt += "?,"
-			params = append(params, id)
-		}
-
-		rows, err := cat.wp.db.Query(stmt[:len(stmt)-1]+")", params...)
+		stmt, args, err := sqrl.Select("term_id").
+			From(table(c, "term_taxonomy")).
+			Where(sqrl.Eq{"parent": ids}).ToSql()
 		if err != nil {
 			return nil, err
 		}
 
-		ids = make([]int64, 0)
+		rows, err := database(c).Query(stmt, args...)
+		if err != nil {
+			return nil, err
+		}
+
+		ids = nil
 		for rows.Next() {
 			var id int64
 			if err := rows.Scan(&id); err != nil {
@@ -71,91 +87,90 @@ func (cat *Category) GetChildrenIds() ([]int64, error) {
 	return ret, nil
 }
 
-func (wp *WordPress) GetCategoryIdBySlug(slug string) (int64, error) {
+// GetCategoryIdBySlug returns the id of the category that matches the given slug
+func GetCategoryIdBySlug(c context.Context, slug string) (int64, error) {
+	span := trace.FromContext(c).NewChild("/wordpress.GetCategoryIdBySlug")
+	defer span.Finish()
+
+	c = trace.NewContext(c, span)
+
 	parts := strings.Split(slug, "/")
 
-	var catId int64 = 0
+	var catId int64
 	for _, part := range parts {
-		ids, err := wp.QueryTerms(&TermQueryOptions{
-			Taxonomy:   TaxonomyCategory,
-			Slug:       part,
-			ParentIdIn: []int64{catId}})
+		it, err := queryTerms(c, &TermQueryOptions{
+			Taxonomy: TaxonomyCategory,
+			Slug:     part,
+			ParentId: catId})
 		if err != nil {
 			return 0, err
 		}
 
-		if len(ids) == 0 {
-			return 0, nil
+		if catId, err = it.Next(); err != nil {
+			return 0, errors.New("wordpress: non-existent category slug")
 		}
-
-		catId = ids[0]
 	}
 
 	return catId, nil
 }
 
 // GetCategories gets all category data from the database
-func (wp *WordPress) GetCategories(categoryIds ...int64) ([]*Category, error) {
+func GetCategories(c context.Context, categoryIds ...int64) ([]*Category, error) {
+	span := trace.FromContext(c).NewChild("/wordpress.GetCategories")
+	defer span.Finish()
+
+	c = trace.NewContext(c, span)
+
 	if len(categoryIds) == 0 {
 		return []*Category{}, nil
 	}
 
-	var ret []*Category
-	keyMap, _ := wp.cacheGetMulti(CacheKeyCategory, categoryIds, &ret)
+	ids, idMap := dedupe(categoryIds)
 
-	if len(keyMap) > 0 {
-		missedIds := make([]int64, 0, len(keyMap))
-		for _, indices := range keyMap {
-			missedIds = append(missedIds, categoryIds[indices[0]])
+	terms, err := getTerms(c, ids...)
+	if err != nil {
+		return nil, err
+	}
+
+	counter := 0
+	done := make(chan error)
+
+	ret := make([]*Category, len(categoryIds))
+	for _, term := range terms {
+		cat := Category{Term: *term}
+
+		if cat.Parent > 0 {
+			counter++
+			go func() {
+				parents, err := GetCategories(c, cat.Parent)
+				if err != nil {
+					done <- fmt.Errorf("failed to get parent category for %d: %d\n%v", cat.Id, cat.Parent, err)
+					return
+				}
+
+				if len(parents) == 0 {
+					done <- fmt.Errorf("parent category for %d not found: %d", cat.Id, cat.Parent)
+					return
+				}
+
+				cat.Link = parents[0].Link + "/" + cat.Slug
+
+				done <- nil
+			}()
+		} else {
+			cat.Link = "/category/" + cat.Slug
 		}
 
-		terms, err := wp.GetTerms(missedIds...)
-		if err != nil {
+		// insert into return set
+		for _, index := range idMap[cat.Id] {
+			ret[index] = &cat
+		}
+	}
+
+	for ; counter > 0; counter-- {
+		if err := <-done; err != nil {
 			return nil, err
 		}
-
-		counter := 0
-		done := make(chan error)
-
-		for _, term := range terms {
-			c := Category{Term: *term}
-
-			if c.Parent > 0 {
-				counter++
-				go func() {
-					parents, err := wp.GetCategories(c.Parent)
-					if err != nil {
-						done <- fmt.Errorf("failed to get parent category for %d: %d\n%v", c.Id, c.Parent, err)
-						return
-					}
-
-					if len(parents) == 0 {
-						done <- fmt.Errorf("parent category for %d not found: %d", c.Id, c.Parent)
-						return
-					}
-
-					c.Link = parents[0].Link + "/" + c.Slug
-
-					done <- nil
-				}()
-			} else {
-				c.Link = "/category/" + c.Slug
-			}
-
-			// insert into return set
-			for _, index := range keyMap[fmt.Sprintf(CacheKeyCategory, c.Id)] {
-				ret[index] = &c
-			}
-		}
-
-		for ; counter > 0; counter-- {
-			if err := <-done; err != nil {
-				return nil, err
-			}
-		}
-
-		// just let this run, no callback is needed
-		go wp.cacheSetByKeyMap(keyMap, ret)
 	}
 
 	return ret, nil

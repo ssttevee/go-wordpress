@@ -1,11 +1,10 @@
 package wordpress
 
 import (
-	"fmt"
+	"cloud.google.com/go/trace"
 	"github.com/wulijun/go-php-serialize/phpserialize"
+	"golang.org/x/net/context"
 )
-
-const CacheKeyAttachment = "wp_attachment_%d"
 
 // Attachment represents a WordPress attachment
 type Attachment struct {
@@ -23,107 +22,88 @@ type Attachment struct {
 }
 
 // GetAttachments gets all attachment data from the database
-func (wp *WordPress) GetAttachments(attachmentIds ...int64) ([]*Attachment, error) {
-	var ret []*Attachment
-	keyMap, _ := wp.cacheGetMulti(CacheKeyAttachment, attachmentIds, &ret)
+func GetAttachments(c context.Context, attachmentIds ...int64) ([]*Attachment, error) {
+	span := trace.FromContext(c).NewChild("/wordpress.GetAttachments")
+	defer span.Finish()
 
-	if len(keyMap) > 0 {
-		missedIds := make([]int64, 0, len(keyMap))
-		for _, indices := range keyMap {
-			missedIds = append(missedIds, attachmentIds[indices[0]])
+	c = trace.NewContext(c, span)
+
+	if len(attachmentIds) == 0 {
+		return nil, nil
+	}
+
+	ids, idMap := dedupe(attachmentIds)
+
+	objects, err := getObjects(c, ids...)
+	if err != nil {
+		return nil, err
+	}
+
+	baseUrl, _ := GetOption(c, "upload_url_path")
+	if baseUrl == "" {
+		siteUrl, _ := GetOption(c, "siteurl")
+		baseDir, _ := GetOption(c, "upload_path")
+		if baseDir == "" {
+			baseDir = "/wp-content/uploads"
 		}
 
-		objects, err := wp.GetObjects(missedIds...)
+		baseUrl = siteUrl + baseDir
+	}
+
+	ret := make([]*Attachment, len(attachmentIds))
+	for _, obj := range objects {
+		att := Attachment{Object: *obj}
+
+		meta, err := att.GetMeta(c, "_wp_attachment_metadata")
 		if err != nil {
 			return nil, err
 		}
 
-		baseUrl, _ := wp.GetOption("upload_url_path")
-		if baseUrl == "" {
-			siteUrl, _ := wp.GetOption("siteurl")
-			baseDir, _ := wp.GetOption("upload_path")
-			if baseDir == "" {
-				baseDir = "/wp-content/uploads"
-			}
+		if enc, ok := meta["_wp_attachment_metadata"]; ok && enc != "" {
+			if dec, err := phpserialize.Decode(enc); err == nil {
+				if meta, ok := dec.(map[interface{}]interface{}); ok {
+					if file, ok := meta["file"].(string); ok {
+						att.FileName = file
+					}
 
-			baseUrl = siteUrl + baseDir
-		}
+					if width, ok := meta["width"].(int64); ok {
+						att.Width = int(width)
+					}
 
-		for _, obj := range objects {
-			a := Attachment{Object: *obj}
+					if height, ok := meta["height"].(int64); ok {
+						att.Height = int(height)
+					}
 
-			meta, err := a.GetMeta("_wp_attachment_metadata")
-			if err != nil {
-				return nil, err
-			}
-
-			if enc, ok := meta["_wp_attachment_metadata"]; ok && enc != "" {
-				if dec, err := phpserialize.Decode(enc); err == nil {
-					if meta, ok := dec.(map[interface{}]interface{}); ok {
-						if file, ok := meta["file"].(string); ok {
-							a.FileName = file
+					if imageMeta, ok := meta["image_meta"].(map[interface{}]interface{}); ok {
+						if caption, ok := imageMeta["caption"].(string); ok {
+							att.Caption = caption
 						}
 
-						if width, ok := meta["width"].(int64); ok {
-							a.Width = int(width)
-						}
-
-						if height, ok := meta["height"].(int64); ok {
-							a.Height = int(height)
-						}
-
-						if imageMeta, ok := meta["image_meta"].(map[interface{}]interface{}); ok {
-							if caption, ok := imageMeta["caption"].(string); ok {
-								a.Caption = caption
-							}
-
-							if alt, ok := imageMeta["title"].(string); ok {
-								a.AltText = alt
-							}
+						if alt, ok := imageMeta["title"].(string); ok {
+							att.AltText = alt
 						}
 					}
 				}
 			}
-
-			a.Url = baseUrl + a.Date.Format("/2006/01/") + a.FileName
-
-			// insert into return set
-			for _, index := range keyMap[fmt.Sprintf(CacheKeyAttachment, a.Id)] {
-				ret[index] = &a
-			}
 		}
 
-		for _, filter := range filters.AfterGetAttachments {
+		att.Url = baseUrl + att.Date.Format("/2006/01/") + att.FileName
 
-			ret, err = filter(wp, ret)
-			if err != nil {
-				return nil, err
-			}
+		// insert into return set
+		for _, index := range idMap[att.Id] {
+			ret[index] = &att
 		}
-
-		// just let this run, no callback is needed
-		go wp.cacheSetByKeyMap(keyMap, ret)
-	}
-
-	var err MissingResourcesError
-	for i, att := range ret {
-		if att == nil {
-			err = append(err, attachmentIds[i])
-		} else {
-			att.wp = wp
-		}
-	}
-
-	if len(err) > 0 {
-		return nil, err
 	}
 
 	return ret, nil
 }
 
-// QueryAttachments queries the database and returns all matching attachment ids
-func (wp *WordPress) QueryAttachments(q *ObjectQueryOptions) ([]int64, error) {
-	q.PostType = PostTypeAttachment
+// QueryAttachments returns the ids of the attachments that match the query
+func QueryAttachments(c context.Context, opts *ObjectQueryOptions) (Iterator, error) {
+	span := trace.FromContext(c).NewChild("/wordpress.QueryAttachments")
+	defer span.Finish()
 
-	return wp.QueryObjects(q)
+	opts.PostType = PostTypeAttachment
+
+	return queryObjects(trace.NewContext(c, span), opts)
 }

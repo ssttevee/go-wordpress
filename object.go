@@ -1,14 +1,16 @@
 package wordpress
 
 import (
+	"cloud.google.com/go/trace"
+	"encoding/base64"
 	"fmt"
+	"github.com/elgris/sqrl"
+	"golang.org/x/net/context"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
-
-const CacheKeyObject = "wp_object_%d"
 
 var regexpQuerySeparators = regexp.MustCompile("[,+~]")
 var regexpQueryDelimiter = regexp.MustCompile("[^a-zA-Z]")
@@ -18,13 +20,11 @@ var regexpQueryDelimiter = regexp.MustCompile("[^a-zA-Z]")
 // Not really a Post object, per se, since WP uses it for other things like pages and menu items.
 // However it's in the 'posts' table, so... whatever...
 type Object struct {
-	wp *WordPress
-
 	// The post's ID
 	Id int64 `json:"id"`
 
 	// The post author's ID
-	AuthorId int `json:"author"`
+	AuthorId int64 `json:"author"`
 
 	// The post's local publication time.
 	Date time.Time `json:"date"`
@@ -94,8 +94,8 @@ type Object struct {
 //
 // Somewhat similar to WP's json plugin
 type ObjectQueryOptions struct {
-	Page    int `param:"page"`
-	PerPage int `param:"per_page"`
+	After string `param:"after"`
+	Limit int    `param:"limit"`
 
 	Order          string `param:"order_by"`
 	OrderAscending bool   `param:"order_asc"`
@@ -163,30 +163,35 @@ type ObjectQueryOptions struct {
 	Day   int `param:"day_of_month"`
 	Month int `param:"month_num"`
 	Year  int `param:"year"`
+
+	AfterDate time.Time
 }
 
 // GetMeta gets the object's metadata from the database
 //
 // Returns all metadata if no metadata keys are given
-func (obj *Object) GetMeta(keys ...string) (map[string]string, error) {
-	params := make([]interface{}, 0, 1)
-	stmt := "SELECT meta_key, meta_value FROM " + obj.wp.table("postmeta") + " " +
-		"WHERE post_id = ?"
-	params = append(params, obj.Id)
+func (obj *Object) GetMeta(c context.Context, keys ...string) (map[string]string, error) {
+	span := trace.FromContext(c).NewChild("/wordpress.Object.GetMeta")
+	defer span.Finish()
+
+	q := sqrl.Select("meta_key", "meta_value").
+		From(table(c, "postmeta")).
+		Where(sqrl.Eq{"post_id": obj.Id})
 
 	if len(keys) > 0 {
-		stmt += " AND meta_key IN (?"
-		params = append(params, keys[0])
-		for _, key := range keys[1:] {
-			stmt += ",?"
-			params = append(params, key)
-		}
-		stmt += ")"
+		q = q.Where(sqrl.Eq{"meta_key": keys})
 	}
 
-	rows, err := obj.wp.db.Query(stmt, params...)
+	sql, args, err := q.ToSql()
 	if err != nil {
-		return nil, fmt.Errorf("Object GetMeta - Query: %v", err)
+		return nil, err
+	}
+
+	trace.FromContext(c).SetLabel("wp/meta/query", sql)
+
+	rows, err := database(c).Query(sql, args...)
+	if err != nil {
+		return nil, err
 	}
 
 	meta := make(map[string]string)
@@ -199,6 +204,8 @@ func (obj *Object) GetMeta(keys ...string) (map[string]string, error) {
 		meta[key] = val
 	}
 
+	span.SetLabel("wp/meta/count", strconv.Itoa(len(meta)))
+
 	return meta, nil
 }
 
@@ -206,572 +213,565 @@ func (obj *Object) GetMeta(keys ...string) (map[string]string, error) {
 // whose taxonomies match any of the given taxonomies
 //
 // i.e. `GetTaxonomy("category")` will return all of the object's related categories
-func (obj *Object) GetTaxonomy(taxonomy ...Taxonomy) ([]int64, error) {
+func (obj *Object) GetTaxonomy(c context.Context, taxonomy ...Taxonomy) (Iterator, error) {
 	if len(taxonomy) == 0 {
-		return []int64{}, nil
-	} else if len(taxonomy) == 1 {
-		return obj.wp.QueryTerms(&TermQueryOptions{ObjectId: obj.Id, Taxonomy: taxonomy[0]})
+		return zeroIter, nil
 	} else {
-		return obj.wp.QueryTerms(&TermQueryOptions{ObjectId: obj.Id, TaxonomyIn: taxonomy})
+		return queryTerms(c, &TermQueryOptions{ObjectId: obj.Id, TaxonomyIn: taxonomy})
 	}
 }
 
 // GetObjects gets all object data from the database
 // (not including metadata)
-func (wp *WordPress) GetObjects(objectIds ...int64) ([]*Object, error) {
+func getObjects(c context.Context, objectIds ...int64) ([]*Object, error) {
 	if len(objectIds) == 0 {
-		return []*Object{}, nil
+		return nil, nil
 	}
 
-	var ret []*Object
-	keyMap, _ := wp.cacheGetMulti(CacheKeyObject, objectIds, &ret)
+	// dedupe the given object ids
+	ids, idMap := dedupe(objectIds)
 
-	if len(keyMap) > 0 {
-		params := make([]interface{}, 0, len(keyMap))
-		stmt := "SELECT * FROM " + wp.table("posts") + " " +
-			"WHERE ID IN ("
-		for _, indices := range keyMap {
-			stmt += "?,"
-			params = append(params, objectIds[indices[0]])
-		}
-		stmt = stmt[:len(stmt)-1] + ") "
-
-		rows, err := wp.db.Query(stmt, params...)
-		if err != nil {
-			return nil, fmt.Errorf("GetObjects - Query: %v", err)
-		}
-
-		for rows.Next() {
-			obj := Object{}
-
-			var commentStatus, pingStatus string
-
-			if err := rows.Scan(
-				&obj.Id,
-				&obj.AuthorId,
-				&obj.Date,
-				&obj.DateGmt,
-				&obj.Content,
-				&obj.Title,
-				&obj.Excerpt,
-				&obj.Status,
-				&commentStatus,
-				&pingStatus,
-				&obj.Password,
-				&obj.Name,
-				&obj.ToPing,
-				&obj.Pinged,
-				&obj.Modified,
-				&obj.ModifiedGmt,
-				&obj.ContentFiltered,
-				&obj.ParentId,
-				&obj.Guid,
-				&obj.MenuOrder,
-				&obj.Type,
-				&obj.MimeType,
-				&obj.CommentCount); err != nil {
-				return nil, fmt.Errorf("GetObjects - Scan: %v", err)
-			}
-
-			obj.CommentStatus = commentStatus == "open"
-			obj.PingStatus = pingStatus == "open"
-
-			// prepare for storing to cache
-			key := fmt.Sprintf(CacheKeyObject, obj.Id)
-
-			// insert into return set
-			for _, index := range keyMap[key] {
-				ret[index] = &obj
-			}
-		}
-
-		// just let this run, no callback is needed
-		go wp.cacheSetByKeyMap(keyMap, ret)
+	// select objects from the database
+	stmt, args, err := sqrl.Select("*").
+		From(table(c, "posts")).
+		Where(sqrl.Eq{"ID": ids}).ToSql()
+	if err != nil {
+		return nil, err
 	}
 
-	var err MissingResourcesError
+	trace.FromContext(c).SetLabel("wp/object/query", stmt)
+
+	rows, err := database(c).Query(stmt, args...)
+	if err != nil {
+		return nil, fmt.Errorf("GetObjects - Query: %v", err)
+	}
+
+	ret := make([]*Object, len(objectIds))
+	for rows.Next() {
+		var obj Object
+		var commentStatus, pingStatus string
+		if err := rows.Scan(
+			&obj.Id,
+			&obj.AuthorId,
+			&obj.Date,
+			&obj.DateGmt,
+			&obj.Content,
+			&obj.Title,
+			&obj.Excerpt,
+			&obj.Status,
+			&commentStatus,
+			&pingStatus,
+			&obj.Password,
+			&obj.Name,
+			&obj.ToPing,
+			&obj.Pinged,
+			&obj.Modified,
+			&obj.ModifiedGmt,
+			&obj.ContentFiltered,
+			&obj.ParentId,
+			&obj.Guid,
+			&obj.MenuOrder,
+			&obj.Type,
+			&obj.MimeType,
+			&obj.CommentCount); err != nil {
+			return nil, fmt.Errorf("unable to read object data: %v", err)
+		}
+
+		obj.CommentStatus = commentStatus == "open"
+		obj.PingStatus = pingStatus == "open"
+
+		// redupe and insert into return set
+		for _, index := range idMap[obj.Id] {
+			ret[index] = &obj
+		}
+	}
+
+	trace.FromContext(c).SetLabel("wp/object/count", strconv.Itoa(len(ret)))
+
+	var mre MissingResourcesError
 	for i, obj := range ret {
 		if obj == nil {
-			err = append(err, objectIds[i])
-		} else {
-			obj.wp = wp
+			mre = append(mre, objectIds[i])
 		}
 	}
 
-	if len(err) > 0 {
+	if len(mre) > 0 {
 		return nil, err
 	}
 
 	return ret, nil
 }
 
-// QueryObjects queries the database and returns all matching object ids
-func (wp *WordPress) QueryObjects(q *ObjectQueryOptions) ([]int64, error) {
-	stmt := "SELECT DISTINCT ID FROM " + wp.table("posts") + " "
-	where := "WHERE "
+type inSubquery struct {
+	column string
+	query  sqrl.Sqlizer
+	neg    bool
+}
 
-	var params []interface{}
-
-	termSearchSetup := "SELECT object_id FROM " + wp.table("term_relationships") + " AS tr " +
-		"INNER JOIN (" + wp.table("terms") + " AS t, " + wp.table("term_taxonomy") + " AS tt) " +
-		"ON tr.term_taxonomy_id = tt.term_taxonomy_id AND tt.term_id = t.term_id WHERE "
-
-	if q.PostType != "" {
-		where += "post_type = ? AND "
-		params = append(params, string(q.PostType))
+func (in inSubquery) ToSql() (string, []interface{}, error) {
+	stmt, args, err := in.query.ToSql()
+	if err != nil {
+		return "", nil, err
 	}
 
-	if q.PostStatus != "" {
-		where += "post_status = ? AND "
-		params = append(params, string(q.PostStatus))
+	stmt = " IN (" + stmt + ")"
+	if in.neg {
+		stmt = " NOT" + stmt
 	}
 
-	if q.Author > 0 {
-		where += "post_author = ? AND "
-		params = append(params, q.Author)
-	} else if q.AuthorIn != nil && len(q.AuthorIn) > 0 {
-		where += "post_author IN (?"
-		params = append(params, q.AuthorIn[0])
-		for _, authorId := range q.AuthorIn[1:] {
-			where += ", ?"
-			params = append(params, authorId)
-		}
-		where += ") AND "
-	} else if q.AuthorNotIn != nil && len(q.AuthorNotIn) > 0 {
-		where += "post_author NOT IN (?"
-		params = append(params, q.AuthorNotIn[0])
-		for _, authorId := range q.AuthorNotIn[1:] {
-			where += ", ?"
-			params = append(params, authorId)
-		}
-		where += ") AND "
+	return in.column + stmt, args, nil
+}
+
+// queryObjects returns the ids of the objects that match the query
+func queryObjects(c context.Context, opts *ObjectQueryOptions) (Iterator, error) {
+	if opts.Order == "" {
+		opts.Order = "post_date"
+	} else {
+		// gotta prevent dat sql injection :)
+		opts.Order = strings.Replace(opts.Order, "`", "", -1)
 	}
 
-	if q.AuthorName != "" {
-		where += "post_author IN (SELECT ID FROM wp_users WHERE user_nicename = ?) AND "
-		params = append(params, q.AuthorName)
-	} else if q.AuthorNameIn != nil && len(q.AuthorNameIn) > 0 {
-		where += "post_author IN (SELECT ID FROM wp_users WHERE user_nicename IN (?"
-		params = append(params, q.AuthorNameIn[0])
-		for _, authorName := range q.AuthorNameIn[1:] {
-			where += ", ?"
-			params = append(params, authorName)
-		}
-		where += ")) AND "
-	} else if q.AuthorNameNotIn != nil && len(q.AuthorNameNotIn) > 0 {
-		where += "post_author NOT IN (SELECT ID FROM wp_users WHERE user_nicename NOT IN (?"
-		params = append(params, q.AuthorNameNotIn[0])
-		for _, authorName := range q.AuthorNameNotIn[1:] {
-			where += ", ?"
-			params = append(params, authorName)
-		}
-		where += ")) AND "
+	opts.Order = "`" + opts.Order + "`"
+
+	q := sqrl.Select("ID", opts.Order).From(table(c, "posts"))
+
+	termsSubQuery := sqrl.Select("object_id").
+		From(table(c, "term_relationships") + " AS tr").
+		Join(table(c, "term_taxonomy") + " AS tt ON tr.term_taxonomy_id = tt.term_taxonomy_id").
+		Join(table(c, "terms") + " AS t ON tt.term_id = t.term_id")
+
+	if opts.PostType != "" {
+		q = q.Where(sqrl.Eq{"post_type": string(opts.PostType)})
 	}
 
-	if q.CategoryName != "" {
+	if opts.PostStatus != "" {
+		q = q.Where(sqrl.Eq{"post_status": string(opts.PostStatus)})
+	}
+
+	if opts.Author > 0 {
+		q = q.Where(sqrl.Eq{"post_author": opts.Author})
+	} else if opts.AuthorIn != nil && len(opts.AuthorIn) > 0 {
+		q = q.Where(sqrl.Eq{"post_author": opts.AuthorIn})
+	} else if opts.AuthorNotIn != nil && len(opts.AuthorNotIn) > 0 {
+		q = q.Where(sqrl.NotEq{"post_author": opts.AuthorNotIn})
+	}
+
+	if opts.AuthorName != "" {
+		q = q.Where(inSubquery{
+			column: "post_author",
+			query: sqrl.Select("ID").
+				From(table(c, "users")).
+				Where(sqrl.Eq{"user_nicename": opts.AuthorName})})
+	} else if opts.AuthorNameIn != nil && len(opts.AuthorNameIn) > 0 {
+		q = q.Where(inSubquery{
+			column: "post_author",
+			query: sqrl.Select("ID").
+				From(table(c, "users")).
+				Where(sqrl.Eq{"user_nicename": opts.AuthorNameIn})})
+	} else if opts.AuthorNameNotIn != nil && len(opts.AuthorNameNotIn) > 0 {
+		q = q.Where(inSubquery{
+			column: "post_author",
+			query: sqrl.Select("ID").
+				From(table(c, "users")).
+				Where(sqrl.Eq{"user_nicename": opts.AuthorNameNotIn}),
+			neg: true})
+	}
+
+	if opts.CategoryName != "" {
 		sortCategory := func(cat string) {
 			switch cat[:1] {
 			case "+":
-				if q.CategoryNameAnd == nil {
-					q.CategoryNameAnd = make([]string, 0, 1)
-				}
-
-				q.CategoryNameAnd = append(q.CategoryNameAnd, cat[1:])
+				opts.CategoryNameAnd = append(opts.CategoryNameAnd, cat[1:])
 			case "~":
-				if q.CategoryNameNotIn == nil {
-					q.CategoryNameNotIn = make([]string, 0, 1)
-				}
-
-				q.CategoryNameNotIn = append(q.CategoryNameNotIn, cat[1:])
+				opts.CategoryNameNotIn = append(opts.CategoryNameNotIn, cat[1:])
 			default:
-				if q.CategoryNameIn == nil {
-					q.CategoryNameIn = make([]string, 0, 1)
-				}
-
 				if cat[:1] == "," {
 					cat = cat[1:]
 				}
 
-				q.CategoryNameIn = append(q.CategoryNameIn, cat)
+				opts.CategoryNameIn = append(opts.CategoryNameIn, cat)
 			}
 		}
 		prevIndex := 0
-		for _, indices := range regexpQuerySeparators.FindAllStringIndex(q.CategoryName, -1) {
-			sortCategory(q.CategoryName[prevIndex:indices[0]])
+		for _, indices := range regexpQuerySeparators.FindAllStringIndex(opts.CategoryName, -1) {
+			sortCategory(opts.CategoryName[prevIndex:indices[0]])
 			prevIndex = indices[0]
 		}
 
-		sortCategory(q.CategoryName[prevIndex:])
+		sortCategory(opts.CategoryName[prevIndex:])
 
-		q.CategoryName = ""
+		opts.CategoryName = ""
 	}
 
-	if q.CategoryNameAnd != nil && len(q.CategoryNameAnd) > 0 {
-		for _, categoryName := range q.CategoryNameAnd {
-			catId, _ := wp.GetCategoryIdBySlug(categoryName)
+	if opts.CategoryNameAnd != nil && len(opts.CategoryNameAnd) > 0 {
+		for _, categoryName := range opts.CategoryNameAnd {
+			catId, _ := GetCategoryIdBySlug(c, categoryName)
 			if catId == 0 {
-				return []int64{}, nil
+				continue
 			}
-			q.CategoryAnd = append(q.CategoryAnd, catId)
+			opts.CategoryAnd = append(opts.CategoryAnd, catId)
 		}
-	} else if q.CategoryNameIn != nil && len(q.CategoryNameIn) > 0 {
-		for _, categoryName := range q.CategoryNameIn {
-			catId, _ := wp.GetCategoryIdBySlug(categoryName)
+	} else if opts.CategoryNameIn != nil && len(opts.CategoryNameIn) > 0 {
+		for _, categoryName := range opts.CategoryNameIn {
+			catId, _ := GetCategoryIdBySlug(c, categoryName)
 			if catId == 0 {
-				return []int64{}, nil
+				continue
 			}
-			q.CategoryIn = append(q.CategoryIn, catId)
+			opts.CategoryIn = append(opts.CategoryIn, catId)
 		}
-	} else if q.CategoryNameNotIn != nil && len(q.CategoryNameNotIn) > 0 {
-		for _, categoryName := range q.CategoryNameNotIn {
-			catId, _ := wp.GetCategoryIdBySlug(categoryName)
+	} else if opts.CategoryNameNotIn != nil && len(opts.CategoryNameNotIn) > 0 {
+		for _, categoryName := range opts.CategoryNameNotIn {
+			catId, _ := GetCategoryIdBySlug(c, categoryName)
 			if catId == 0 {
-				return []int64{}, nil
+				continue
 			}
-			q.CategoryNotIn = append(q.CategoryNotIn, catId)
+			opts.CategoryNotIn = append(opts.CategoryNotIn, catId)
 		}
 	}
 
-	if q.Category > 0 {
-		cat := &Category{Term: Term{wp: wp, Id: q.Category}}
-
-		ids, err := cat.GetChildrenIds()
+	if opts.Category > 0 {
+		cat := Category{Term: Term{Id: opts.Category}}
+		ids, err := cat.GetChildrenIds(c)
 		if err != nil {
 			return nil, err
 		}
 
-		where += "ID IN (" + termSearchSetup + "tt.taxonomy = 'category' AND t.term_id IN ("
-		for _, categoryId := range ids {
-			where += "?,"
-			params = append(params, categoryId)
-		}
-		where = where[:len(where)-1] + ")) AND "
-	} else if q.CategoryAnd != nil && len(q.CategoryAnd) > 0 {
-		for _, categoryId := range q.CategoryAnd {
-			where += "ID IN (" + termSearchSetup + "tt.taxonomy = 'category' AND t.term_id = ?) AND "
-			params = append(params, categoryId)
-		}
-	} else if q.CategoryIn != nil && len(q.CategoryIn) > 0 {
-		for _, categoryId := range q.CategoryIn[:] {
-			cat := &Category{Term: Term{wp: wp, Id: categoryId}}
-
-			ids, err := cat.GetChildrenIds()
+		q = q.Where(inSubquery{
+			column: "ID",
+			query: termsSubQuery.Where(sqrl.Eq{
+				"tt.taxonomy": "category",
+				"t.term_id":   ids})})
+	} else if opts.CategoryAnd != nil && len(opts.CategoryAnd) > 0 {
+		for _, categoryId := range opts.CategoryAnd {
+			cat := Category{Term: Term{Id: categoryId}}
+			ids, err := cat.GetChildrenIds(c)
 			if err != nil {
 				return nil, err
 			}
 
-			q.CategoryIn = append(q.CategoryIn, ids...)
+			q = q.Where(inSubquery{
+				column: "ID",
+				query: termsSubQuery.Where(sqrl.Eq{
+					"tt.taxonomy": "category",
+					"t.term_id":   ids})})
 		}
-
-		where += "ID IN (" + termSearchSetup + "tt.taxonomy = 'category' AND t.term_id IN ("
-		for _, categoryId := range q.CategoryIn {
-			where += "?,"
-			params = append(params, categoryId)
-		}
-		where = where[:len(where)-1] + ")) AND "
-	} else if q.CategoryNotIn != nil && len(q.CategoryNotIn) > 0 {
-		for _, categoryId := range q.CategoryNotIn[:] {
-			cat := &Category{Term: Term{wp: wp, Id: categoryId}}
-
-			ids, err := cat.GetChildrenIds()
+	} else if opts.CategoryIn != nil && len(opts.CategoryIn) > 0 {
+		var catIds []int64
+		for _, categoryId := range opts.CategoryIn[:] {
+			cat := Category{Term: Term{Id: categoryId}}
+			ids, err := cat.GetChildrenIds(c)
 			if err != nil {
 				return nil, err
 			}
 
-			q.CategoryNotIn = append(q.CategoryNotIn, ids...)
+			catIds = append(append(catIds, categoryId), ids...)
 		}
 
-		where += "ID NOT IN (" + termSearchSetup + "tt.taxonomy = 'category' AND t.term_id IN (?"
-		for _, categoryId := range q.CategoryNotIn {
-			where += "?,"
-			params = append(params, categoryId)
+		q = q.Where(inSubquery{
+			column: "ID",
+			query: termsSubQuery.Where(sqrl.Eq{
+				"tt.taxonomy": "category",
+				"t.term_id":   catIds})})
+	} else if opts.CategoryNotIn != nil && len(opts.CategoryNotIn) > 0 {
+		var catIds []int64
+		for _, categoryId := range opts.CategoryNotIn[:] {
+			cat := Category{Term: Term{Id: categoryId}}
+			ids, err := cat.GetChildrenIds(c)
+			if err != nil {
+				return nil, err
+			}
+
+			catIds = append(append(catIds, categoryId), ids...)
 		}
-		where = where[:len(where)-1] + ")) AND "
+
+		q = q.Where(inSubquery{
+			column: "ID",
+			query: termsSubQuery.Where(sqrl.Eq{
+				"tt.taxonomy": "category",
+				"t.term_id":   catIds}),
+			neg: true})
 	}
 
-	if q.MenuId > 0 {
-		where += "ID IN (" + termSearchSetup + "tt.taxonomy = 'nav_menu' AND t.term_id = ?) AND "
-		params = append(params, q.MenuId)
-	} else if q.MenuIdAnd != nil && len(q.MenuIdAnd) > 0 {
-		for _, menuId := range q.MenuIdAnd {
-			where += "ID IN (" + termSearchSetup + "tt.taxonomy = 'nav_menu' AND t.term_id = ?) AND "
-			params = append(params, menuId)
+	if opts.MenuId > 0 {
+		q = q.Where(inSubquery{
+			column: "ID",
+			query: termsSubQuery.Where(sqrl.Eq{
+				"tt.taxonomy": "nav_menu",
+				"t.term_id":   opts.MenuId})})
+	} else if opts.MenuIdAnd != nil && len(opts.MenuIdAnd) > 0 {
+		for _, menuId := range opts.MenuIdAnd {
+			q = q.Where(inSubquery{
+				column: "ID",
+				query: termsSubQuery.Where(sqrl.Eq{
+					"tt.taxonomy": "nav_menu",
+					"t.term_id":   menuId})})
 		}
-	} else if q.MenuIdIn != nil && len(q.MenuIdIn) > 0 {
-		where += "ID IN (" + termSearchSetup + "tt.taxonomy = 'nav_menu' AND t.term_id IN (?"
-		params = append(params, q.MenuIdIn[0])
-		for _, menuId := range q.MenuIdIn[1:] {
-			where += ", ?"
-			params = append(params, menuId)
-		}
-		where += ")) AND "
-	} else if q.MenuIdNotIn != nil && len(q.MenuIdNotIn) > 0 {
-		where += "ID NOT IN (" + termSearchSetup + "tt.taxonomy = 'nav_menu' AND t.term_id IN (?"
-		params = append(params, q.MenuIdNotIn[0])
-		for _, menuId := range q.MenuIdNotIn[1:] {
-			where += ", ?"
-			params = append(params, menuId)
-		}
-		where += ")) AND "
+	} else if opts.MenuIdIn != nil && len(opts.MenuIdIn) > 0 {
+		q = q.Where(inSubquery{
+			column: "ID",
+			query: termsSubQuery.Where(sqrl.Eq{
+				"tt.taxonomy": "nav_menu",
+				"t.term_id":   opts.MenuIdIn})})
+	} else if opts.MenuIdNotIn != nil && len(opts.MenuIdNotIn) > 0 {
+		q = q.Where(inSubquery{
+			column: "ID",
+			query: termsSubQuery.Where(sqrl.Eq{
+				"tt.taxonomy": "nav_menu",
+				"t.term_id":   opts.MenuIdNotIn}),
+			neg: true})
 	}
 
-	if q.MenuName != "" {
-		where += "ID IN (" + termSearchSetup + "tt.taxonomy = 'nav_menu' AND t.slug = ?) AND "
-		params = append(params, q.MenuName)
-	} else if q.MenuNameAnd != nil && len(q.MenuNameAnd) > 0 {
-		for _, menuName := range q.MenuNameAnd {
-			where += "ID IN (" + termSearchSetup + "tt.taxonomy = 'nav_menu' AND t.slug = ?) AND "
-			params = append(params, menuName)
-		}
-	} else if q.MenuNameIn != nil && len(q.MenuNameIn) > 0 {
-		where += "ID IN (" + termSearchSetup + "tt.taxonomy = 'nav_menu' AND t.slug IN (?"
-		params = append(params, q.MenuNameIn[0])
-		for _, menuName := range q.MenuNameIn[1:] {
-			where += ", ?"
-			params = append(params, menuName)
-		}
-		where += ")) AND "
-	} else if q.MenuNameNotIn != nil && len(q.MenuNameNotIn) > 0 {
-		where += "ID NOT IN (" + termSearchSetup + "tt.taxonomy = 'nav_menu' AND t.slug IN (?"
-		params = append(params, q.MenuNameNotIn[0])
-		for _, menuName := range q.MenuNameNotIn[1:] {
-			where += ", ?"
-			params = append(params, menuName)
-		}
-		where += ")) AND "
+	if opts.MenuName != "" {
+		q = q.Where(inSubquery{
+			column: "ID",
+			query: termsSubQuery.Where(sqrl.Eq{
+				"tt.taxonomy": "nav_menu",
+				"t.slug":      opts.MenuName})})
+	} else if opts.MenuNameIn != nil && len(opts.MenuNameIn) > 0 {
+		q = q.Where(inSubquery{
+			column: "ID",
+			query: termsSubQuery.Where(sqrl.Eq{
+				"tt.taxonomy": "nav_menu",
+				"t.slug":      opts.MenuNameIn})})
+	} else if opts.MenuNameNotIn != nil && len(opts.MenuNameNotIn) > 0 {
+		q = q.Where(inSubquery{
+			column: "ID",
+			query: termsSubQuery.Where(sqrl.Eq{
+				"tt.taxonomy": "nav_menu",
+				"t.slug":      opts.MenuNameNotIn}),
+			neg: true})
 	}
 
-	var searchMeta = func(metas ...string) (where string) {
-		where = "ID "
+	var searchMeta = func(metas ...string) {
+		neg := false
 		if metas[0] == "is not in" {
-			where += "NOT "
+			neg = true
 			metas = metas[1:]
 
 			if len(metas) == 0 {
-				return ""
+				return
 			}
 		}
-		where += "IN (SELECT DISTINCT post_id FROM " + wp.table("postmeta") + " WHERE "
+		subQuery := sqrl.Select("post_id").Distinct().From(table(c, "postmeta"))
+		var metaConds sqrl.Or
 		for _, meta := range metas {
-			where += "("
+			metaCond := make(sqrl.Eq)
 			if equal := strings.IndexRune(meta, '='); equal != -1 {
-				where += "meta_value = ? AND "
-				params = append(params, meta[equal + 1:])
+				metaCond["meta_value"] = meta[equal+1:]
 				meta = meta[:equal]
 			}
-			where += "meta_key = ?) OR "
-			params = append(params, meta)
+			metaCond["meta_key"] = meta
+			metaConds = append(metaConds, metaCond)
 		}
-		return where[:len(where)-4] + ") AND "
+
+		q = q.Where(inSubquery{
+			column: "ID",
+			query:  subQuery.Where(metaConds),
+			neg:    neg})
 	}
 
-	if q.Meta != "" {
-		where += searchMeta(q.Meta)
-	} else if len(q.MetaAnd) > 0 {
-		for _, meta := range q.MetaAnd {
-			where += searchMeta(meta)
+	if opts.Meta != "" {
+		searchMeta(opts.Meta)
+	} else if len(opts.MetaAnd) > 0 {
+		for _, meta := range opts.MetaAnd {
+			searchMeta(meta)
 		}
-	} else if len(q.MetaIn) > 0 {
-		where += searchMeta(q.MetaIn...)
-	} else if len(q.MetaNotIn) > 0 {
-		where += searchMeta(append([]string{"is not in"}, q.MetaNotIn...)...)
+	} else if len(opts.MetaIn) > 0 {
+		searchMeta(opts.MetaIn...)
+	} else if len(opts.MetaNotIn) > 0 {
+		searchMeta(append([]string{"is not in"}, opts.MetaNotIn...)...)
 	}
 
-	if q.Name != "" {
-		where += "post_name = ? AND "
-		params = append(params, q.Name)
-	} else if q.NameIn != nil && len(q.NameIn) > 0 {
-		where += "post_name IN (?"
-		params = append(params, q.NameIn[0])
-		for _, name := range q.NameIn[1:] {
-			where += ", ?"
-			params = append(params, name)
-		}
-		where += ") AND "
-	} else if q.NameNotIn != nil && len(q.NameNotIn) > 0 {
-		where += "post_name NOT IN (?"
-		params = append(params, q.NameNotIn[0])
-		for _, name := range q.NameNotIn[1:] {
-			where += ", ?"
-			params = append(params, name)
-		}
-		where += ") AND "
+	if opts.Name != "" {
+		q = q.Where(sqrl.Eq{"post_name": opts.Name})
+	} else if opts.NameIn != nil && len(opts.NameIn) > 0 {
+		q = q.Where(sqrl.Eq{"post_name": opts.NameIn})
+	} else if opts.NameNotIn != nil && len(opts.NameNotIn) > 0 {
+		q = q.Where(sqrl.NotEq{"post_name": opts.NameNotIn})
 	}
 
-	if q.Parent > 0 {
-		where += "post_parent = ? AND "
-		params = append(params, q.Parent)
-	} else if q.ParentIn != nil && len(q.ParentIn) > 0 {
-		where += "post_parent IN (?"
-		params = append(params, q.ParentIn[0])
-		for _, parentId := range q.ParentIn[1:] {
-			where += ", ?"
-			params = append(params, parentId)
-		}
-		where += ") AND "
-	} else if q.ParentNotIn != nil && len(q.ParentNotIn) > 0 {
-		where += "post_parent NOT IN (?"
-		params = append(params, q.ParentNotIn[0])
-		for _, parentId := range q.ParentNotIn[1:] {
-			where += ", ?"
-			params = append(params, parentId)
-		}
-		where += ") AND "
+	if opts.Parent > 0 {
+		q = q.Where(sqrl.Eq{"post_parent": opts.Parent})
+	} else if opts.ParentIn != nil && len(opts.ParentIn) > 0 {
+		q = q.Where(sqrl.Eq{"post_parent": opts.ParentIn})
+	} else if opts.ParentNotIn != nil && len(opts.ParentNotIn) > 0 {
+		q = q.Where(sqrl.NotEq{"post_parent": opts.ParentNotIn})
 	}
 
-	if q.Post > 0 {
-		where += "ID = ? AND "
-		params = append(params, q.Post)
-	} else if q.PostIn != nil && len(q.PostIn) > 0 {
-		where += "ID IN (?"
-		params = append(params, q.PostIn[0])
-		for _, postId := range q.PostIn[1:] {
-			where += ", ?"
-			params = append(params, postId)
-		}
-		where += ") AND "
-	} else if q.PostNotIn != nil && len(q.PostNotIn) > 0 {
-		where += "ID NOT IN (?"
-		params = append(params, q.PostNotIn[0])
-		for _, postId := range q.PostNotIn[1:] {
-			where += ", ?"
-			params = append(params, postId)
-		}
-		where += ") AND "
+	if opts.Post > 0 {
+		q = q.Where(sqrl.Eq{"ID": opts.Post})
+	} else if opts.PostIn != nil && len(opts.PostIn) > 0 {
+		q = q.Where(sqrl.Eq{"ID": opts.PostIn})
+	} else if opts.PostNotIn != nil && len(opts.PostNotIn) > 0 {
+		q = q.Where(sqrl.NotEq{"ID": opts.PostNotIn})
 	}
 
-	if q.TagId > 0 {
-		where += "ID IN (" + termSearchSetup + "tt.taxonomy = 'post_tag' AND t.term_id = ?) AND "
-		params = append(params, q.TagId)
-	} else if q.TagIdAnd != nil && len(q.TagIdAnd) > 0 {
-		for _, tagId := range q.TagIdAnd {
-			where += "ID IN (" + termSearchSetup + "tt.taxonomy = 'post_tag' AND t.term_id = ?) AND "
-			params = append(params, tagId)
+	if opts.TagId > 0 {
+		q = q.Where(inSubquery{
+			column: "ID",
+			query: termsSubQuery.Where(sqrl.Eq{
+				"tt.taxonomy": "post_tag",
+				"t.term_id":   opts.TagId})})
+	} else if opts.TagIdAnd != nil && len(opts.TagIdAnd) > 0 {
+		for _, tagId := range opts.TagIdAnd {
+			q = q.Where(inSubquery{
+				column: "ID",
+				query: termsSubQuery.Where(sqrl.Eq{
+					"tt.taxonomy": "post_tag",
+					"t.term_id":   tagId})})
 		}
-	} else if q.TagIdIn != nil && len(q.TagIdIn) > 0 {
-		where += "ID IN (" + termSearchSetup + "tt.taxonomy = 'post_tag' AND t.term_id IN (?"
-		params = append(params, q.TagIdIn[0])
-		for _, tagId := range q.TagIdIn[1:] {
-			where += ", ?"
-			params = append(params, tagId)
-		}
-		where += ")) AND "
-	} else if q.TagIdNotIn != nil && len(q.TagIdNotIn) > 0 {
-		where += "ID NOT IN (" + termSearchSetup + "tt.taxonomy = 'post_tag' AND t.term_id IN (?"
-		params = append(params, q.TagIdNotIn[0])
-		for _, tagId := range q.TagIdNotIn[1:] {
-			where += ", ?"
-			params = append(params, tagId)
-		}
-		where += ")) AND "
+	} else if opts.TagIdIn != nil && len(opts.TagIdIn) > 0 {
+		q = q.Where(inSubquery{
+			column: "ID",
+			query: termsSubQuery.Where(sqrl.Eq{
+				"tt.taxonomy": "post_tag",
+				"t.term_id":   opts.TagIdIn})})
+	} else if opts.TagIdNotIn != nil && len(opts.TagIdNotIn) > 0 {
+		q = q.Where(inSubquery{
+			column: "ID",
+			query: termsSubQuery.Where(sqrl.Eq{
+				"tt.taxonomy": "post_tag",
+				"t.term_id":   opts.TagIdNotIn}),
+			neg: true})
 	}
 
-	if q.TagName != "" {
-		where += "ID IN (" + termSearchSetup + "tt.taxonomy = 'post_tag' AND t.slug = ?) AND "
-		params = append(params, q.TagName)
-	} else if q.TagNameAnd != nil && len(q.TagNameAnd) > 0 {
-		for _, tagName := range q.TagNameAnd {
-			where += "ID IN (" + termSearchSetup + "tt.taxonomy = 'post_tag' AND t.slug = ?) AND "
-			params = append(params, tagName)
+	if opts.TagName != "" {
+		q = q.Where(inSubquery{
+			column: "ID",
+			query: termsSubQuery.Where(sqrl.Eq{
+				"tt.taxonomy": "post_tag",
+				"t.slug":      opts.TagName})})
+	} else if opts.TagNameAnd != nil && len(opts.TagNameAnd) > 0 {
+		for _, tagName := range opts.TagNameAnd {
+			q = q.Where(inSubquery{
+				column: "ID",
+				query: termsSubQuery.Where(sqrl.Eq{
+					"tt.taxonomy": "post_tag",
+					"t.slug":      tagName})})
 		}
-	} else if q.TagNameIn != nil && len(q.TagNameIn) > 0 {
-		where += "ID IN (" + termSearchSetup + "tt.taxonomy = 'post_tag' AND t.slug IN (?"
-		params = append(params, q.TagNameIn[0])
-		for _, tagName := range q.TagNameIn[1:] {
-			where += ", ?"
-			params = append(params, tagName)
-		}
-		where += ")) AND "
-	} else if q.TagNameNotIn != nil && len(q.TagNameNotIn) > 0 {
-		where += "ID NOT IN (" + termSearchSetup + "tt.taxonomy = 'post_tag' AND t.slug IN (?"
-		params = append(params, q.TagNameNotIn[0])
-		for _, tagName := range q.TagNameNotIn[1:] {
-			where += ", ?"
-			params = append(params, tagName)
-		}
-		where += ")) AND "
+	} else if opts.TagNameIn != nil && len(opts.TagNameIn) > 0 {
+		q = q.Where(inSubquery{
+			column: "ID",
+			query: termsSubQuery.Where(sqrl.Eq{
+				"tt.taxonomy": "post_tag",
+				"t.slug":      opts.TagNameIn})})
+	} else if opts.TagNameNotIn != nil && len(opts.TagNameNotIn) > 0 {
+		q = q.Where(inSubquery{
+			column: "ID",
+			query: termsSubQuery.Where(sqrl.Eq{
+				"tt.taxonomy": "post_tag",
+				"t.slug":      opts.TagNameNotIn}),
+			neg: true})
 	}
 
-	if q.Query != "" {
-		query := ""
-		for _, word := range regexpQueryDelimiter.Split(q.Query, -1) {
+	if opts.Query != "" {
+		var pred string
+		var args []interface{}
+		for _, word := range regexpQueryDelimiter.Split(opts.Query, -1) {
 			if len(word) > 2 {
-				query += "post_name LIKE ? OR post_title LIKE ? OR post_content LIKE ? OR "
+				pred += "post_name LIKE ? OR post_title LIKE ? OR post_content LIKE ? OR "
 
 				word = "%" + word + "%"
-				params = append(params, word, word, word)
+				args = append(args, word, word, word)
 			}
 		}
 
-		if query != "" {
-			where += "(" + query[:len(query)-4] + ") AND "
+		if pred != "" {
+			q = q.Where("("+pred[:len(pred)-4]+")", args...)
 		}
 	}
 
-	if q.Day > 0 {
-		where += "DAYOFMONTH(post_date) = ? AND "
-		params = append(params, q.Day)
+	if opts.Day > 0 {
+		q = q.Where(sqrl.Eq{"DAYOFMONTH(post_date)": opts.Day})
 	}
 
-	if q.Month > 0 {
-		where += "MONTH(post_date) = ? AND "
-		params = append(params, q.Month)
+	if opts.Month > 0 {
+		q = q.Where(sqrl.Eq{"MONTH(post_date)": opts.Month})
 	}
 
-	if q.Year > 0 {
-		where += "YEAR(post_date) = ? AND "
-		params = append(params, q.Year)
+	if opts.Year > 0 {
+		q = q.Where(sqrl.Eq{"YEAR(post_date)": opts.Year})
 	}
 
-	if where == "WHERE " {
-		where = ""
-	} else {
-		where = where[:len(where)-4]
+	if !opts.AfterDate.IsZero() {
+		q = q.Where("post_date > ?", opts.AfterDate)
 	}
 
-	order := "ORDER BY `"
-	if q.Order != "" {
-		// gotta prevent dat sql injection :)
-		order += strings.Replace(q.Order, "`", "", -1)
-	} else {
-		order += "post_date"
-	}
-	order += "` "
+	if opts.After != "" {
+		// ignore `q.After` if any errors occur
+		if b, err := base64.URLEncoding.DecodeString(opts.After); err == nil {
 
-	if q.OrderAscending {
-		order += "ASC "
-	} else {
-		order += "DESC "
-	}
+			pred := opts.Order
+			if opts.OrderAscending {
+				pred += ">"
+			} else {
+				pred += "<"
+			}
 
-	limit := ""
-	perPage := q.PerPage
-	if perPage >= 0 {
-		if perPage == 0 {
-			perPage = 10
-		}
+			pred += " ?"
 
-		limit += "LIMIT " + strconv.Itoa(perPage) + " "
-
-		if q.Page > 1 {
-			limit += "OFFSET " + strconv.Itoa((q.Page-1)*perPage) + " "
+			q = q.Where(pred, string(b))
 		}
 	}
 
-	rows, err := wp.db.Query(stmt+where+order+limit, params...)
+	order := opts.Order
+	if opts.OrderAscending {
+		order += " ASC"
+	} else {
+		order += " DESC"
+	}
+
+	q = q.OrderBy(order)
+
+	if opts.Limit == 0 {
+		opts.Limit = 10
+	}
+
+	if opts.Limit > 0 {
+		q = q.Limit(uint64(opts.Limit))
+	}
+
+	stmt, args, err := q.ToSql()
 	if err != nil {
 		return nil, err
 	}
 
-	ret := make([]int64, 0)
+	trace.FromContext(c).SetLabel("wp/object/query", stmt)
+
+	rows, err := database(c).Query(stmt, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	var ids []int64
+	var cursors []string
 	for rows.Next() {
 		var id int64
-		if err := rows.Scan(&id); err != nil {
+		var cursor string
+		if err = rows.Scan(&id, &cursor); err != nil {
 			return nil, err
 		}
 
-		ret = append(ret, id)
+		ids = append(ids, id)
+		cursors = append(cursors, cursor)
 	}
 
-	return ret, nil
+	trace.FromContext(c).SetLabel("wp/object/count", strconv.Itoa(len(ids)))
+
+	it := iteratorImpl{cursor: opts.After}
+
+	var counter int
+	it.next = func() (id int64, err error) {
+		if counter < len(ids) {
+			id = ids[counter]
+			it.cursor = base64.URLEncoding.EncodeToString([]byte(cursors[counter]))
+			counter++
+		} else {
+			return it.exit(Done)
+		}
+
+		return id, err
+	}
+
+	return &it, nil
 }

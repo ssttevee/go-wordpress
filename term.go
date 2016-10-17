@@ -1,16 +1,16 @@
 package wordpress
 
 import (
+	"cloud.google.com/go/trace"
+	"encoding/base64"
 	"fmt"
+	"github.com/elgris/sqrl"
+	"golang.org/x/net/context"
 	"strconv"
 )
 
-const CacheKeyTerm = "wp_term_%d"
-
 // Term represents a WordPress term
 type Term struct {
-	wp *WordPress
-
 	// Term ID.
 	Id int64 `json:"id"`
 
@@ -41,8 +41,8 @@ type Term struct {
 
 // TermQueryOptions represents the available parameters for querying
 type TermQueryOptions struct {
-	Page    int `param:"page"`
-	PerPage int `param:"per_page"`
+	After string `param:"after"`
+	Limit int    `param:"limit"`
 
 	Id      int64   `param:"term_id"`
 	IdIn    []int64 `param:"term_id__in"`
@@ -70,268 +70,202 @@ type TermQueryOptions struct {
 }
 
 // GetTerms gets all term data from the database
-func (wp *WordPress) GetTerms(termIds ...int64) ([]*Term, error) {
+func getTerms(c context.Context, termIds ...int64) ([]*Term, error) {
 	if len(termIds) == 0 {
 		return []*Term{}, nil
 	}
 
-	var ret []*Term
-	keyMap, _ := wp.cacheGetMulti(CacheKeyTerm, termIds, &ret)
+	ids, idMap := dedupe(termIds)
 
-	if len(keyMap) > 0 {
-		params := make([]interface{}, 0, len(keyMap))
-		stmt := "SELECT t.term_id, t.name, t.slug, t.term_group, tt.term_taxonomy_id, tt.taxonomy, tt.description, tt.parent, tt.count FROM " + wp.table("terms") + " AS t " +
-			"JOIN (" + wp.table("term_taxonomy") + " AS tt) ON tt.term_id = t.term_id WHERE t.term_id IN ("
-		for _, indices := range keyMap {
-			stmt += "?,"
-			params = append(params, termIds[indices[0]])
-		}
-		stmt = stmt[:len(stmt)-1] + ")"
-
-		rows, err := wp.db.Query(stmt, params...)
-		if err != nil {
-			return nil, fmt.Errorf("Term SQL query fail: %v", err)
-		}
-
-		for rows.Next() {
-			t := Term{}
-
-			if err := rows.Scan(
-				&t.Id,
-				&t.Name,
-				&t.Slug,
-				&t.Group,
-				&t.TaxonomyId,
-				&t.Taxonomy,
-				&t.Description,
-				&t.Parent,
-				&t.Count); err != nil {
-				return nil, fmt.Errorf("Unable to read term data: %v", err)
-			}
-
-			// insert into return set
-			for _, index := range keyMap[fmt.Sprintf(CacheKeyTerm, t.Id)] {
-				ret[index] = &t
-			}
-		}
-
-		// just let this run, no callback is needed
-		go wp.cacheSetByKeyMap(keyMap, ret)
+	stmt, args, err := sqrl.Select("t.term_id", "t.name", "t.slug", "t.term_group", "tt.term_taxonomy_id", "tt.taxonomy", "tt.description", "tt.parent", "tt.count").
+		From(table(c, "terms") + " AS t").
+		Join(table(c, "term_taxonomy") + " AS tt ON tt.term_id = t.term_id").
+		Where(sqrl.Eq{"t.term_id": ids}).ToSql()
+	if err != nil {
+		return nil, err
 	}
 
-	var err MissingResourcesError
+	trace.FromContext(c).SetLabel("wp/term/query", stmt)
+
+	rows, err := database(c).Query(stmt, args...)
+	if err != nil {
+		return nil, fmt.Errorf("Term SQL query fail: %v", err)
+	}
+
+	ret := make([]*Term, len(termIds))
+	for rows.Next() {
+		var t Term
+		if err := rows.Scan(
+			&t.Id,
+			&t.Name,
+			&t.Slug,
+			&t.Group,
+			&t.TaxonomyId,
+			&t.Taxonomy,
+			&t.Description,
+			&t.Parent,
+			&t.Count); err != nil {
+			return nil, fmt.Errorf("unable to read term data: %v", err)
+		}
+
+		// redupe and insert into return set
+		for _, index := range idMap[t.Id] {
+			ret[index] = &t
+		}
+	}
+
+	trace.FromContext(c).SetLabel("wp/term/count", strconv.Itoa(len(ret)))
+
+	var mre MissingResourcesError
 	for i, term := range ret {
 		if term == nil {
-			err = append(err, termIds[i])
-		} else {
-			term.wp = wp
+			mre = append(mre, termIds[i])
 		}
 	}
 
-	if len(err) > 0 {
+	if len(mre) > 0 {
 		return nil, err
 	}
 
 	return ret, nil
 }
 
-// QueryTerms queries the database and returns all matching term ids
-func (wp *WordPress) QueryTerms(q *TermQueryOptions) ([]int64, error) {
-	where := "WHERE "
+// queryTerms returns the ids of the terms that match the query
+func queryTerms(c context.Context, opts *TermQueryOptions) (Iterator, error) {
+	q := sqrl.Select("t.term_id").
+		From(table(c, "terms") + " AS t").
+		OrderBy("t.term_id ASC")
 
 	var requireTaxonomy, requireRelationships bool
 
-	var params []interface{}
-
-	if q.Name != "" {
-		where += "t.name = ? AND "
-		params = append(params, q.Name)
-	} else if q.NameIn != nil && len(q.NameIn) > 0 {
-		where += "t.name IN (?"
-		params = append(params, q.NameIn[0])
-		for _, name := range q.NameIn[1:] {
-			where += ", ?"
-			params = append(params, name)
-		}
-		where += ") AND "
-	} else if q.NameNotIn != nil && len(q.NameNotIn) > 0 {
-		where += "t.name NOT IN (?"
-		params = append(params, q.NameNotIn[0])
-		for _, name := range q.NameNotIn[1:] {
-			where += ", ?"
-			params = append(params, name)
-		}
-		where += ") AND "
+	if opts.Name != "" {
+		q = q.Where(sqrl.Eq{"t.name": opts.Name})
+	} else if opts.NameIn != nil && len(opts.NameIn) > 0 {
+		q = q.Where(sqrl.Eq{"t.name": opts.NameIn})
+	} else if opts.NameNotIn != nil && len(opts.NameNotIn) > 0 {
+		q = q.Where(sqrl.NotEq{"t.name": opts.NameNotIn})
 	}
 
-	if q.ObjectId > 0 {
+	if opts.ObjectId > 0 {
 		requireRelationships = true
-
-		where += "tr.object_id = ? AND "
-		params = append(params, q.ObjectId)
-	} else if q.ObjectIdIn != nil && len(q.ObjectIdIn) > 0 {
+		q = q.Where(sqrl.Eq{"tr.object_id": opts.ObjectId})
+	} else if opts.ObjectIdIn != nil && len(opts.ObjectIdIn) > 0 {
 		requireRelationships = true
-
-		where += "tr.object_id IN (?"
-		params = append(params, q.ObjectIdIn[0])
-		for _, objectId := range q.ObjectIdIn[1:] {
-			where += ", ?"
-			params = append(params, objectId)
-		}
-		where += ") AND "
-	} else if q.ObjectIdNotIn != nil && len(q.ObjectIdNotIn) > 0 {
+		q = q.Where(sqrl.Eq{"tr.object_id": opts.ObjectIdIn})
+	} else if opts.ObjectIdNotIn != nil && len(opts.ObjectIdNotIn) > 0 {
 		requireRelationships = true
-
-		where += "tr.object_id NOT IN (?"
-		params = append(params, q.ObjectIdNotIn[0])
-		for _, objectId := range q.ObjectIdNotIn[1:] {
-			where += ", ?"
-			params = append(params, objectId)
-		}
-		where += ") AND "
+		q = q.Where(sqrl.NotEq{"tr.object_id": opts.ObjectIdNotIn})
 	}
 
-	if q.ParentId > 0 {
+	if opts.ParentId > 0 {
 		requireTaxonomy = true
-
-		where += "tt.parent = ? AND "
-		params = append(params, q.ParentId)
-	} else if q.ParentIdIn != nil && len(q.ParentIdIn) > 0 {
+		q = q.Where(sqrl.Eq{"tt.parent": opts.ParentId})
+	} else if opts.ParentIdIn != nil && len(opts.ParentIdIn) > 0 {
 		requireTaxonomy = true
-
-		where += "tt.parent IN (?"
-		params = append(params, q.ParentIdIn[0])
-		for _, parentId := range q.ParentIdIn[1:] {
-			where += ", ?"
-			params = append(params, parentId)
-		}
-		where += ") AND "
-	} else if q.ParentIdNotIn != nil && len(q.ParentIdNotIn) > 0 {
+		q = q.Where(sqrl.Eq{"tt.parent": opts.ParentIdIn})
+	} else if opts.ParentIdNotIn != nil && len(opts.ParentIdNotIn) > 0 {
 		requireTaxonomy = true
-
-		where += "tt.parent NOT IN (?"
-		params = append(params, q.ParentIdNotIn[0])
-		for _, parentId := range q.ParentIdNotIn[1:] {
-			where += ", ?"
-			params = append(params, parentId)
-		}
-		where += ") AND "
+		q = q.Where(sqrl.NotEq{"tt.parent": opts.ParentIdNotIn})
 	}
 
-	if q.Slug != "" {
-		where += "t.slug = ? AND "
-		params = append(params, q.Slug)
-	} else if q.SlugIn != nil && len(q.SlugIn) > 0 {
-		where += "t.slug IN (?"
-		params = append(params, q.SlugIn[0])
-		for _, slug := range q.SlugIn[1:] {
-			where += ", ?"
-			params = append(params, slug)
-		}
-		where += ") AND "
-	} else if q.SlugNotIn != nil && len(q.SlugNotIn) > 0 {
-		where += "t.slug NOT IN (?"
-		params = append(params, q.SlugNotIn[0])
-		for _, slug := range q.SlugNotIn[1:] {
-			where += ", ?"
-			params = append(params, slug)
-		}
-		where += ") AND "
+	if opts.Slug != "" {
+		q = q.Where(sqrl.Eq{"t.slug": opts.Slug})
+	} else if opts.SlugIn != nil && len(opts.SlugIn) > 0 {
+		q = q.Where(sqrl.Eq{"t.slug": opts.SlugIn})
+	} else if opts.SlugNotIn != nil && len(opts.SlugNotIn) > 0 {
+		q = q.Where(sqrl.NotEq{"t.slug": opts.SlugNotIn})
 	}
 
-	if q.Taxonomy != "" {
+	if opts.Taxonomy != "" {
 		requireTaxonomy = true
-
-		where += "tt.taxonomy = ? AND "
-		params = append(params, string(q.Taxonomy))
-	} else if q.TaxonomyIn != nil && len(q.TaxonomyIn) > 0 {
+		q = q.Where(sqrl.Eq{"tt.taxonomy": string(opts.Taxonomy)})
+	} else if opts.TaxonomyIn != nil && len(opts.TaxonomyIn) > 0 {
 		requireTaxonomy = true
-
-		where += "tt.taxonomy IN (?"
-		params = append(params, string(q.TaxonomyIn[0]))
-		for _, taxonomy := range q.TaxonomyIn[1:] {
-			where += ", ?"
-			params = append(params, string(taxonomy))
+		var taxonomies []string
+		for _, taxonomy := range opts.TaxonomyIn {
+			taxonomies = append(taxonomies, string(taxonomy))
 		}
-		where += ") AND "
-	} else if q.TaxonomyNotIn != nil && len(q.TaxonomyNotIn) > 0 {
+
+		q = q.Where(sqrl.Eq{"tt.taxonomy": taxonomies})
+	} else if opts.TaxonomyNotIn != nil && len(opts.TaxonomyNotIn) > 0 {
 		requireTaxonomy = true
-
-		where += "tt.taxonomy NOT IN (?"
-		params = append(params, string(q.TaxonomyNotIn[0]))
-		for _, taxonomy := range q.TaxonomyNotIn[1:] {
-			where += ", ?"
-			params = append(params, string(taxonomy))
+		var taxonomies []string
+		for _, taxonomy := range opts.TaxonomyNotIn {
+			taxonomies = append(taxonomies, string(taxonomy))
 		}
-		where += ") AND "
+
+		q = q.Where(sqrl.NotEq{"tt.taxonomy": taxonomies})
 	}
 
-	if q.Id > 0 {
-		where += "t.term_id = ? AND "
-		params = append(params, q.Id)
-	} else if q.IdIn != nil && len(q.IdIn) > 0 {
-		where += "t.term_id IN (?"
-		params = append(params, q.IdIn[0])
-		for _, termId := range q.IdIn[1:] {
-			where += ", ?"
-			params = append(params, termId)
-		}
-		where += ") AND "
-	} else if q.IdNotIn != nil && len(q.IdNotIn) > 0 {
-		where += "t.term_id NOT IN (?"
-		params = append(params, q.IdNotIn[0])
-		for _, termId := range q.IdNotIn[1:] {
-			where += ", ?"
-			params = append(params, termId)
-		}
-		where += ") AND "
+	if opts.Id > 0 {
+		q = q.Where(sqrl.Eq{"t.term_id": opts.Id})
+	} else if opts.IdIn != nil && len(opts.IdIn) > 0 {
+		q = q.Where(sqrl.Eq{"t.term_id": opts.IdIn})
+	} else if opts.IdNotIn != nil && len(opts.IdNotIn) > 0 {
+		q = q.Where(sqrl.NotEq{"t.term_id": opts.IdNotIn})
 	}
 
-	if where == "WHERE " {
-		return []int64{}, nil
+	if opts.After != "" {
+		// ignore `q.After` if any errors occur
+		if b, err := base64.URLEncoding.DecodeString(opts.After); err == nil {
+			q = q.Where("t.term_id > ?", string(b))
+		}
 	}
 
-	where = where[:len(where)-4]
-
-	perPage := q.PerPage
-	if perPage >= 0 {
-		if perPage == 0 {
-			perPage = 10
-		}
-
-		limit := "LIMIT " + strconv.Itoa(perPage) + " "
-
-		if q.Page > 1 {
-			limit += "OFFSET " + strconv.Itoa((q.Page-1)*perPage) + " "
-		}
-
-		where += limit
+	if opts.Limit == 0 {
+		opts.Limit = 10
 	}
 
-	stmt := "SELECT DISTINCT t.term_id FROM " + wp.table("terms") + " AS t "
+	if opts.Limit >= 0 {
+		q = q.Limit(uint64(opts.Limit))
+	}
 
 	if requireTaxonomy || requireRelationships {
-		stmt += "JOIN " + wp.table("term_taxonomy") + " AS tt ON tt.term_id = t.term_id "
+		q = q.Join(table(c, "term_taxonomy") + " AS tt ON tt.term_id = t.term_id")
 	}
 
 	if requireRelationships {
-		stmt += "JOIN " + wp.table("term_relationships") + " AS tr ON tr.term_taxonomy_id = tt.term_taxonomy_id "
+		q = q.Join(table(c, "term_relationships") + " AS tr ON tr.term_taxonomy_id = tt.term_taxonomy_id")
 	}
 
-	rows, err := wp.db.Query(stmt+where, params...)
+	sql, args, err := q.ToSql()
 	if err != nil {
 		return nil, err
 	}
 
-	ret := make([]int64, 0)
+	trace.FromContext(c).SetLabel("wp/term/query", sql)
+
+	rows, err := database(c).Query(sql, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	var ids []int64
 	for rows.Next() {
 		var id int64
-		if err := rows.Scan(&id); err != nil {
+		if err = rows.Scan(&id); err != nil {
 			return nil, err
 		}
 
-		ret = append(ret, id)
+		ids = append(ids, id)
 	}
 
-	return ret, nil
+	trace.FromContext(c).SetLabel("wp/term/count", strconv.Itoa(len(ids)))
+
+	it := iteratorImpl{cursor: opts.After}
+
+	var counter int
+	it.next = func() (id int64, err error) {
+		if counter < len(ids) {
+			id = ids[counter]
+			it.cursor = base64.URLEncoding.EncodeToString([]byte(strconv.FormatInt(id, 10)))
+			counter++
+		} else {
+			return it.exit(Done)
+		}
+
+		return id, err
+	}
+
+	return &it, nil
 }

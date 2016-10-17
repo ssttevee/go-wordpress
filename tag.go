@@ -1,11 +1,10 @@
 package wordpress
 
 import (
+	"cloud.google.com/go/trace"
 	"encoding/json"
-	"fmt"
+	"golang.org/x/net/context"
 )
-
-const CacheKeyTag = "wp_tag_%d"
 
 // Tag represents a WordPress tag
 type Tag struct {
@@ -23,47 +22,31 @@ func (tag *Tag) MarshalJSON() ([]byte, error) {
 }
 
 // GetTags gets all tag data from the database
-func (wp *WordPress) GetTags(tagIds ...int64) ([]*Tag, error) {
+func GetTags(c context.Context, tagIds ...int64) ([]*Tag, error) {
+	span := trace.FromContext(c).NewChild("/wordpress.GetTags")
+	defer span.Finish()
+
 	if len(tagIds) == 0 {
-		return []*Tag{}, nil
+		return nil, nil
 	}
 
-	var ret []*Tag
-	keyMap, _ := wp.cacheGetMulti(CacheKeyTag, tagIds, &ret)
+	ids, idMap := dedupe(tagIds)
 
-	if len(keyMap) > 0 {
-		missedIds := make([]int64, 0, len(keyMap))
-		for _, indices := range keyMap {
-			missedIds = append(missedIds, tagIds[indices[0]])
+	ret := make([]*Tag, len(tagIds))
+	terms, err := getTerms(c, ids...)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, term := range terms {
+		t := Tag{Term: *term}
+
+		t.Link = "/tag/" + t.Slug
+
+		// insert into return set
+		for _, index := range idMap[t.Id] {
+			ret[index] = &t
 		}
-
-		terms, err := wp.GetTerms(missedIds...)
-		if err != nil {
-			return nil, err
-		}
-
-		counter := 0
-		done := make(chan error)
-
-		for _, term := range terms {
-			t := Tag{Term: *term}
-
-			t.Link = "/tag/" + t.Slug
-
-			// insert into return set
-			for _, index := range keyMap[fmt.Sprintf(CacheKeyTag, t.Id)] {
-				ret[index] = &t
-			}
-		}
-
-		for ; counter > 0; counter-- {
-			if err := <-done; err != nil {
-				return nil, err
-			}
-		}
-
-		// just let this run, no callback is needed
-		go wp.cacheSetByKeyMap(keyMap, ret)
 	}
 
 	return ret, nil

@@ -1,13 +1,14 @@
 package wordpress
 
 import (
+	"cloud.google.com/go/trace"
 	"fmt"
+	"github.com/elgris/sqrl"
 	"github.com/wulijun/go-php-serialize/phpserialize"
+	"golang.org/x/net/context"
 	"sort"
 	"strconv"
 )
-
-const CacheKeyMenu = "wp_menu_%v"
 
 // MenuItem represents a WordPress menu item
 type MenuItem struct {
@@ -40,11 +41,22 @@ type MenuLocation struct {
 	Slug string `json:"slug"`
 }
 
-// GetMenuLocations gets the available menu locations from the database
-func (wp *WordPress) GetMenuLocations() ([]*MenuLocation, error) {
-	rows, err := wp.db.Query("SELECT t.term_id, t.name, t.slug FROM "+wp.table("terms")+" AS t "+
-		"JOIN "+wp.table("term_taxonomy")+" AS tt ON t.term_id = tt.term_id "+
-		"WHERE tt.taxonomy = ?", "nav_menu")
+// GetMenus gets the available menus from the database
+func GetMenus(c context.Context) ([]*MenuLocation, error) {
+	span := trace.FromContext(c).NewChild("/wordpress.GetMenus")
+	defer span.Finish()
+
+	stmt, args, err := sqrl.Select("t.term_id", "t.name", "t.slug").
+		From(table(c, "terms") + " AS t").
+		Join(table(c, "term_taxonomy") + " AS tt ON t.term_id = tt.term_id").
+		Where(sqrl.Eq{"tt.taxonomy": "nav_menu"}).ToSql()
+	if err != nil {
+		return nil, err
+	}
+
+	span.SetLabel("wp/menu/query", stmt)
+
+	rows, err := database(c).Query(stmt, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -60,66 +72,50 @@ func (wp *WordPress) GetMenuLocations() ([]*MenuLocation, error) {
 		ret = append(ret, &ml)
 	}
 
+	span.SetLabel("wp/menu/count", strconv.Itoa(len(ret)))
+
 	return ret, nil
 }
 
-// GetMenuById gets the entire menu hierarchy by the menu location id
-func (wp *WordPress) GetMenuById(menuId int64) ([]*MenuItem, error) {
-	return wp.getMenuItems(&ObjectQueryOptions{MenuId: menuId})
-}
+// GetMenuItems gets the entire menu hierarchy
+//
+// It is also the most expensive operation in this package... use sparingly...
+func GetMenuItems(c context.Context, opts *ObjectQueryOptions) ([]*MenuItem, error) {
+	span := trace.FromContext(c).NewChild("/wordpress.GetMenu")
+	defer span.Finish()
 
-// GetMenuBySlug gets the entire menu hierarchy by the menu location slug
-func (wp *WordPress) GetMenuBySlug(menuSlug string) ([]*MenuItem, error) {
-	return wp.getMenuItems(&ObjectQueryOptions{MenuName: menuSlug})
-}
+	c = trace.NewContext(c, span)
 
-// getMenuItems is the most expensive operation in this package... use sparingly...
-func (wp *WordPress) getMenuItems(q *ObjectQueryOptions) ([]*MenuItem, error) {
-	var cacheKey string
-	if q.MenuName != "" {
-		cacheKey = fmt.Sprintf(CacheKeyMenu, q.MenuName)
-	} else {
-		cacheKey = fmt.Sprintf(CacheKeyMenu, q.MenuId)
-	}
+	opts.Limit = -1
+	opts.PostType = PostTypeNavMenuItem
 
-	if !wp.FlushCache {
-		var cacheResult []*MenuItem
-		err := wp.cacheGet(cacheKey, &cacheResult)
-		if err == nil {
-			return cacheResult, nil
-		}
-	}
-
-	q.PerPage = -1
-	q.PostType = PostTypeNavMenuItem
-
-	objectIds, err := wp.QueryObjects(q)
+	it, err := queryObjects(c, opts)
 	if err != nil {
 		return nil, err
 	}
 
-	objects, err := wp.GetObjects(objectIds...)
-
-	if len(objects) == 0 {
-		return []*MenuItem{}, nil
-	}
-
-	// prepare a slice for the query parameters
-	var params []interface{}
-
-	// generate the SQL statement
-	stmt := "SELECT post_id, meta_key, meta_value FROM " + wp.table("postmeta") + " WHERE post_id IN (?"
-	params = append(params, objects[0].Id)
-	for _, obj := range objects {
-		stmt += ",?"
-		params = append(params, obj.Id)
-	}
-	stmt += ")"
-
-	rows, err := wp.db.Query(stmt, params...)
+	objectIds, err := it.Slice()
 	if err != nil {
 		return nil, err
 	}
+
+	if len(objectIds) == 0 {
+		return nil, nil
+	}
+
+	stmt, args, err := sqrl.Select("post_id", "meta_key", "meta_value").
+		From(table(c, "postmeta")).
+		Where(sqrl.Eq{"post_id": objectIds}).ToSql()
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := database(c).Query(stmt, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	var n int
 
 	metaMap := make(map[int64]map[string]string)
 	for rows.Next() {
@@ -136,10 +132,19 @@ func (wp *WordPress) getMenuItems(q *ObjectQueryOptions) ([]*MenuItem, error) {
 		}
 
 		metaMap[id][key] = value
+
+		n++
 	}
+
+	span.SetLabel("wp/menu/items", strconv.Itoa(n))
 
 	count := 0
 	done := make(chan error)
+
+	objects, err := getObjects(c, objectIds...)
+	if err != nil {
+		return nil, err
+	}
 
 	menuItems := make(map[int64]*MenuItem)
 	for _, obj := range objects {
@@ -203,7 +208,7 @@ func (wp *WordPress) getMenuItems(q *ObjectQueryOptions) ([]*MenuItem, error) {
 			go func() {
 				if mi.Type == MenuItemTypeTaxonomy {
 					if mi.Object == "category" {
-						cats, err := wp.GetCategories(mi.ObjectId)
+						cats, err := GetCategories(c, mi.ObjectId)
 						if err != nil {
 							done <- err
 							return
@@ -219,19 +224,21 @@ func (wp *WordPress) getMenuItems(q *ObjectQueryOptions) ([]*MenuItem, error) {
 						var url string
 						pageId := mi.ObjectId
 						for pageId != 0 {
-							row := wp.db.QueryRow("SELECT post_title, post_name, post_parent "+
-								"FROM "+wp.table("posts")+" WHERE ID = ?", pageId)
+							row := sqrl.Select("post_title", "post_name", "post_parent").
+								From(table(c, "posts")).
+								Where(sqrl.Eq{"ID": pageId}).
+								RunWith(database(c)).QueryRow()
 
-							var t, n string
+							var title, slug string
 							var parent int64
-							if err := row.Scan(&t, &n, &parent); err != nil {
+							if err := row.Scan(&title, &slug, &parent); err != nil {
 								done <- fmt.Errorf("wordpress: %v", err)
 							} else {
 								if mi.Title == "" {
-									mi.Title = t
+									mi.Title = title
 								}
 
-								url = "/" + n + url
+								url = "/" + slug + url
 							}
 
 							pageId = parent
@@ -241,8 +248,10 @@ func (wp *WordPress) getMenuItems(q *ObjectQueryOptions) ([]*MenuItem, error) {
 
 						done <- nil
 					} else {
-						row := wp.db.QueryRow("SELECT YEAR(post_date), MONTH(post_date), post_title, post_name "+
-							"FROM "+wp.table("posts")+" WHERE ID = ?", mi.ObjectId)
+						row := sqrl.Select("SELECT YEAR(post_date)", "MONTH(post_date)", "post_title", "post_name").
+							From(table(c, "posts")).
+							Where(sqrl.Eq{"ID": mi.ObjectId}).
+							RunWith(database(c)).QueryRow()
 
 						var year, month int
 						var title, slug string
@@ -288,10 +297,6 @@ func (wp *WordPress) getMenuItems(q *ObjectQueryOptions) ([]*MenuItem, error) {
 		count--
 	}
 
-	go func() {
-		_ = wp.cacheSet(cacheKey, &ret)
-	}()
-
 	return ret, nil
 }
 
@@ -314,6 +319,16 @@ func (mis MenuItemList) Swap(i, j int) {
 	tmp := mis[i]
 	mis[i] = mis[j]
 	mis[j] = tmp
+}
+
+func (mis MenuItemList) Count() int {
+	n := len(mis)
+
+	for _, mi := range mis {
+		n += MenuItemList(mi.Children).Count()
+	}
+
+	return n
 }
 
 func sortMenuItems(mis []*MenuItem) {

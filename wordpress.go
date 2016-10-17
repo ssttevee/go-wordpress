@@ -4,8 +4,17 @@ import (
 	"database/sql"
 
 	// WordPress needs mysql
+	"cloud.google.com/go/trace"
+	"github.com/elgris/sqrl"
 	_ "github.com/go-sql-driver/mysql"
-	"fmt"
+	"golang.org/x/net/context"
+)
+
+type ctxKey int
+
+var (
+	databaseKey interface{} = ctxKey(0)
+	prefixKey   interface{} = ctxKey(1)
 )
 
 // WordPress represents access to the WordPress database
@@ -13,9 +22,6 @@ type WordPress struct {
 	db *sql.DB
 
 	TablePrefix string
-
-	CacheMgr   CacheManager
-	FlushCache bool
 }
 
 // New creates and returns a new WordPress connection
@@ -32,11 +38,9 @@ func New(host, user, password, database string) (*WordPress, error) {
 	return &WordPress{db: db}, nil
 }
 
-// Database returns a pointer to the database connection
-//
-// Useful for setting max open connections or max connection lifetime
-func (wp *WordPress) Database() *sql.DB {
-	return wp.db
+// SetMaxOpenConns sets the max number open connections
+func (wp *WordPress) SetMaxOpenConns(n int) {
+	wp.db.SetMaxOpenConns(n)
 }
 
 // Close closes the connection to the database
@@ -46,32 +50,53 @@ func (wp *WordPress) Close() error {
 	return wp.db.Close()
 }
 
-func (wp *WordPress) table(table string) string {
-	return wp.TablePrefix + table
+// NewContext returns a derived context containing the database connection
+func NewContext(parent context.Context, wp *WordPress) context.Context {
+	parent = context.WithValue(parent, databaseKey, wp.db)
+	parent = context.WithValue(parent, prefixKey, wp.TablePrefix)
+
+	return parent
 }
 
-func (wp *WordPress) Clone() *WordPress {
-	return &WordPress{db: wp.db, TablePrefix: wp.TablePrefix, CacheMgr: wp.CacheMgr, FlushCache: wp.FlushCache}
-}
-
-const CacheKeyOption = "wp_option_%s"
-func (wp *WordPress) GetOption(name string) (value string, err error) {
-	key := fmt.Sprintf(CacheKeyOption, name)
-	if wp.CacheMgr != nil && !wp.FlushCache {
-		if wp.cacheGet(key, &value); value != "" {
-			return value, nil
-		}
+func table(c context.Context, table string) string {
+	prefix, ok := c.Value(prefixKey).(string)
+	if !ok {
+		panic("non-wordpress context")
 	}
 
-	if err = wp.db.QueryRow(
-		"SELECT option_value FROM " + wp.table("options") + " WHERE option_name = ?",
-		name).Scan(&value); err != nil {
+	return prefix + table
+}
+
+func database(c context.Context) *sql.DB {
+	db, ok := c.Value(databaseKey).(*sql.DB)
+	if !ok {
+		panic("non-wordpress context")
+	}
+
+	return db
+}
+
+// GetOption returns the string value of the WordPress option
+func GetOption(c context.Context, name string) (string, error) {
+	span := trace.FromContext(c).NewChild("/wordpress.GetOption")
+	defer span.Finish()
+
+	span.SetLabel("wp/option/name", name)
+
+	stmt, args, err := sqrl.Select("option_value").
+		From(table(c, "options")).
+		Where(sqrl.Eq{"option_name": name}).ToSql()
+	if err != nil {
 		return "", err
 	}
 
-	if wp.CacheMgr != nil {
-		go wp.CacheMgr.Set(name, value)
+	span.SetLabel("wp/query", stmt)
+
+	var value string
+	err = database(c).QueryRow(stmt, args...).Scan(&value)
+	if err != nil {
+		return "", err
 	}
 
-	return value, nil
+	return value, err
 }

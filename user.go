@@ -56,7 +56,7 @@ func GetUsers(c context.Context, userIds ...int64) ([]*User, error) {
 		From(table(c, "users") + " AS u").
 		Join(table(c, "usermeta") + " AS um ON um.user_id = u.ID").
 		Where(sqrl.Eq{"meta_key": "description"}).
-		GroupBy("u.ID").
+		GroupBy("u.ID, um.meta_value").
 		Where(sqrl.Eq{"u.ID": ids}).ToSql()
 	if err != nil {
 		return nil, err

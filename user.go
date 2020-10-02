@@ -1,7 +1,7 @@
 package wordpress
 
 import (
-	"cloud.google.com/go/trace"
+	"go.opencensus.io/trace"
 	"crypto/md5"
 	"encoding/base64"
 	"fmt"
@@ -43,8 +43,8 @@ type UserQueryOptions struct {
 
 // GetUsers gets all user data from the database
 func GetUsers(c context.Context, userIds ...int64) ([]*User, error) {
-	span := trace.FromContext(c).NewChild("/wordpress.GetUsers")
-	defer span.Finish()
+	c, span := trace.StartSpan(c, "/wordpress.GetUsers")
+	defer span.End()
 
 	if len(userIds) == 0 {
 		return []*User{}, nil
@@ -98,8 +98,8 @@ func GetUsers(c context.Context, userIds ...int64) ([]*User, error) {
 
 // QueryUsers returns the ids of the users that match the query
 func QueryUsers(c context.Context, opts *UserQueryOptions) (Iterator, error) {
-	span := trace.FromContext(c).NewChild("/wordpress.QueryUsers")
-	defer span.Finish()
+	c, span := trace.StartSpan(c, "/wordpress.QueryUsers")
+	defer span.End()
 
 	q := sqrl.Select("ID").From(table(c, "users")).OrderBy("ID ASC")
 
@@ -139,7 +139,7 @@ func QueryUsers(c context.Context, opts *UserQueryOptions) (Iterator, error) {
 		return nil, err
 	}
 
-	span.SetLabel("wp/user/query", stmt)
+	span.AddAttributes(trace.StringAttribute("wp/user/query", stmt))
 
 	rows, err := database(c).Query(stmt, args...)
 	if err != nil {
@@ -156,7 +156,7 @@ func QueryUsers(c context.Context, opts *UserQueryOptions) (Iterator, error) {
 		ids = append(ids, id)
 	}
 
-	span.SetLabel("wp/user/count", strconv.Itoa(len(ids)))
+	span.AddAttributes(trace.Int64Attribute("wp/user/count", int64(len(ids))))
 
 	it := iteratorImpl{cursor: opts.After}
 

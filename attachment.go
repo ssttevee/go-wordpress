@@ -1,7 +1,7 @@
 package wordpress
 
 import (
-	"cloud.google.com/go/trace"
+	"go.opencensus.io/trace"
 	"github.com/wulijun/go-php-serialize/phpserialize"
 	"golang.org/x/net/context"
 )
@@ -23,10 +23,8 @@ type Attachment struct {
 
 // GetAttachments gets all attachment data from the database
 func GetAttachments(c context.Context, attachmentIds ...int64) ([]*Attachment, error) {
-	span := trace.FromContext(c).NewChild("/wordpress.GetAttachments")
-	defer span.Finish()
-
-	c = trace.NewContext(c, span)
+	c, span := trace.StartSpan(c, "/wordpress.GetAttachments")
+	defer span.End()
 
 	if len(attachmentIds) == 0 {
 		return nil, nil
@@ -100,10 +98,10 @@ func GetAttachments(c context.Context, attachmentIds ...int64) ([]*Attachment, e
 
 // QueryAttachments returns the ids of the attachments that match the query
 func QueryAttachments(c context.Context, opts *ObjectQueryOptions) (Iterator, error) {
-	span := trace.FromContext(c).NewChild("/wordpress.QueryAttachments")
-	defer span.Finish()
+	c, span := trace.StartSpan(c, "/wordpress.QueryAttachments")
+	defer span.End()
 
 	opts.PostType = PostTypeAttachment
 
-	return queryObjects(trace.NewContext(c, span), opts)
+	return queryObjects(c, opts)
 }

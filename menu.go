@@ -1,7 +1,7 @@
 package wordpress
 
 import (
-	"cloud.google.com/go/trace"
+	"go.opencensus.io/trace"
 	"fmt"
 	"github.com/elgris/sqrl"
 	"github.com/wulijun/go-php-serialize/phpserialize"
@@ -43,8 +43,8 @@ type MenuLocation struct {
 
 // GetMenus gets the available menus from the database
 func GetMenus(c context.Context) ([]*MenuLocation, error) {
-	span := trace.FromContext(c).NewChild("/wordpress.GetMenus")
-	defer span.Finish()
+	c, span := trace.StartSpan(c, "/wordpress.GetMenus")
+	defer span.End()
 
 	stmt, args, err := sqrl.Select("t.term_id", "t.name", "t.slug").
 		From(table(c, "terms") + " AS t").
@@ -54,7 +54,7 @@ func GetMenus(c context.Context) ([]*MenuLocation, error) {
 		return nil, err
 	}
 
-	span.SetLabel("wp/menu/query", stmt)
+	span.AddAttributes(trace.StringAttribute("wp/menu/query", stmt))
 
 	rows, err := database(c).Query(stmt, args...)
 	if err != nil {
@@ -72,7 +72,7 @@ func GetMenus(c context.Context) ([]*MenuLocation, error) {
 		ret = append(ret, &ml)
 	}
 
-	span.SetLabel("wp/menu/count", strconv.Itoa(len(ret)))
+	span.AddAttributes(trace.Int64Attribute("wp/menu/count", int64(len(ret))))
 
 	return ret, nil
 }
@@ -81,10 +81,8 @@ func GetMenus(c context.Context) ([]*MenuLocation, error) {
 //
 // It is also the most expensive operation in this package... use sparingly...
 func GetMenuItems(c context.Context, opts *ObjectQueryOptions) ([]*MenuItem, error) {
-	span := trace.FromContext(c).NewChild("/wordpress.GetMenu")
-	defer span.Finish()
-
-	c = trace.NewContext(c, span)
+	c, span := trace.StartSpan(c, "/wordpress.GetMenu")
+	defer span.End()
 
 	opts.Limit = -1
 	opts.PostType = PostTypeNavMenuItem
@@ -136,7 +134,7 @@ func GetMenuItems(c context.Context, opts *ObjectQueryOptions) ([]*MenuItem, err
 		n++
 	}
 
-	span.SetLabel("wp/menu/items", strconv.Itoa(n))
+	span.AddAttributes(trace.Int64Attribute("wp/menu/items", int64(n)))
 
 	count := 0
 	done := make(chan error)

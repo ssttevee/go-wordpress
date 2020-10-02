@@ -1,7 +1,7 @@
 package wordpress
 
 import (
-	"cloud.google.com/go/trace"
+	"go.opencensus.io/trace"
 	"golang.org/x/net/context"
 	"strconv"
 )
@@ -25,10 +25,8 @@ type Post struct {
 
 // GetPosts gets all post data from the database
 func GetPosts(c context.Context, postIds ...int64) ([]*Post, error) {
-	span := trace.FromContext(c).NewChild("/wordpress.GetPosts")
-	defer span.Finish()
-
-	c = trace.NewContext(c, span)
+	c, span := trace.StartSpan(c, "/wordpress.GetPosts")
+	defer span.End()
 
 	if len(postIds) == 0 {
 		return nil, nil
@@ -108,8 +106,8 @@ func GetPosts(c context.Context, postIds ...int64) ([]*Post, error) {
 
 // QueryPosts returns the ids of the posts that match the query
 func QueryPosts(c context.Context, opts *ObjectQueryOptions) (Iterator, error) {
-	span := trace.FromContext(c).NewChild("/wordpress.QueryPosts")
-	defer span.Finish()
+	c, span := trace.StartSpan(c, "/wordpress.QueryPosts")
+	defer span.End()
 
 	opts.PostStatus = PostStatusPublish
 

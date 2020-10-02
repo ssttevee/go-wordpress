@@ -1,7 +1,7 @@
 package wordpress
 
 import (
-	"cloud.google.com/go/trace"
+	"go.opencensus.io/trace"
 	"encoding/json"
 	"golang.org/x/net/context"
 )
@@ -23,8 +23,8 @@ func (tag *Tag) MarshalJSON() ([]byte, error) {
 
 // GetTags gets all tag data from the database
 func GetTags(c context.Context, tagIds ...int64) ([]*Tag, error) {
-	span := trace.FromContext(c).NewChild("/wordpress.GetTags")
-	defer span.Finish()
+	c, span := trace.StartSpan(c, "/wordpress.GetTags")
+	defer span.End()
 
 	if len(tagIds) == 0 {
 		return nil, nil

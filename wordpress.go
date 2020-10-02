@@ -4,7 +4,7 @@ import (
 	"database/sql"
 
 	// WordPress needs mysql
-	"cloud.google.com/go/trace"
+	"go.opencensus.io/trace"
 	"github.com/elgris/sqrl"
 	_ "github.com/go-sql-driver/mysql"
 	"golang.org/x/net/context"
@@ -78,10 +78,10 @@ func database(c context.Context) *sql.DB {
 
 // GetOption returns the string value of the WordPress option
 func GetOption(c context.Context, name string) (string, error) {
-	span := trace.FromContext(c).NewChild("/wordpress.GetOption")
-	defer span.Finish()
+	c, span := trace.StartSpan(c, "/wordpress.GetOption")
+	defer span.End()
 
-	span.SetLabel("wp/option/name", name)
+	span.AddAttributes(trace.StringAttribute("wp/option/name", name))
 
 	stmt, args, err := sqrl.Select("option_value").
 		From(table(c, "options")).
@@ -90,7 +90,7 @@ func GetOption(c context.Context, name string) (string, error) {
 		return "", err
 	}
 
-	span.SetLabel("wp/query", stmt)
+	span.AddAttributes(trace.StringAttribute("wp/query", stmt))
 
 	var value string
 	err = database(c).QueryRow(stmt, args...).Scan(&value)

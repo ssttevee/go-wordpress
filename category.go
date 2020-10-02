@@ -1,7 +1,7 @@
 package wordpress
 
 import (
-	"cloud.google.com/go/trace"
+	"go.opencensus.io/trace"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -29,8 +29,8 @@ func (cat *Category) MarshalJSON() ([]byte, error) {
 
 // GetChildId returns the category id of the child looked up by it's slug
 func (cat *Category) GetChildId(c context.Context, slug string) (int64, error) {
-	span := trace.FromContext(c).NewChild("/wordpress.Category.GetChildId")
-	defer span.Finish()
+	c, span := trace.StartSpan(c, "/wordpress.Category.GetChildId")
+	defer span.End()
 
 	stmt, args, err := sqrl.Select("term_id").
 		From(table(c, "terms") + " AS t").
@@ -40,7 +40,7 @@ func (cat *Category) GetChildId(c context.Context, slug string) (int64, error) {
 		return 0, err
 	}
 
-	span.SetLabel("wp/query", stmt)
+	span.AddAttributes(trace.StringAttribute("wp/query", stmt))
 
 	var id int64
 	if err := database(c).QueryRow(stmt, args...).Scan(&id); err != nil && err != sql.ErrNoRows {
@@ -52,8 +52,8 @@ func (cat *Category) GetChildId(c context.Context, slug string) (int64, error) {
 
 // GetChildrenIds returns all the ids of the category and it's children
 func (cat *Category) GetChildrenIds(c context.Context) ([]int64, error) {
-	span := trace.FromContext(c).NewChild("/wordpress.Category.GetChildrenIds")
-	defer span.Finish()
+	c, span := trace.StartSpan(c, "/wordpress.Category.GetChildrenIds")
+	defer span.End()
 
 	ret := []int64{cat.Id}
 
@@ -89,10 +89,8 @@ func (cat *Category) GetChildrenIds(c context.Context) ([]int64, error) {
 
 // GetCategoryIdBySlug returns the id of the category that matches the given slug
 func GetCategoryIdBySlug(c context.Context, slug string) (int64, error) {
-	span := trace.FromContext(c).NewChild("/wordpress.GetCategoryIdBySlug")
-	defer span.Finish()
-
-	c = trace.NewContext(c, span)
+	c, span := trace.StartSpan(c, "/wordpress.GetCategoryIdBySlug")
+	defer span.End()
 
 	parts := strings.Split(slug, "/")
 
@@ -116,10 +114,8 @@ func GetCategoryIdBySlug(c context.Context, slug string) (int64, error) {
 
 // GetCategories gets all category data from the database
 func GetCategories(c context.Context, categoryIds ...int64) ([]*Category, error) {
-	span := trace.FromContext(c).NewChild("/wordpress.GetCategories")
-	defer span.Finish()
-
-	c = trace.NewContext(c, span)
+	c, span := trace.StartSpan(c, "/wordpress.GetCategories")
+	defer span.End()
 
 	if len(categoryIds) == 0 {
 		return []*Category{}, nil

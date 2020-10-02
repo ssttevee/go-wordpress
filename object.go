@@ -1,13 +1,12 @@
 package wordpress
 
 import (
-	"cloud.google.com/go/trace"
+	"go.opencensus.io/trace"
 	"encoding/base64"
 	"fmt"
 	"github.com/elgris/sqrl"
 	"golang.org/x/net/context"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -171,8 +170,8 @@ type ObjectQueryOptions struct {
 //
 // Returns all metadata if no metadata keys are given
 func (obj *Object) GetMeta(c context.Context, keys ...string) (map[string]string, error) {
-	span := trace.FromContext(c).NewChild("/wordpress.Object.GetMeta")
-	defer span.Finish()
+	c, span := trace.StartSpan(c, "/wordpress.Object.GetMeta")
+	defer span.End()
 
 	q := sqrl.Select("meta_key", "meta_value").
 		From(table(c, "postmeta")).
@@ -187,7 +186,7 @@ func (obj *Object) GetMeta(c context.Context, keys ...string) (map[string]string
 		return nil, err
 	}
 
-	trace.FromContext(c).SetLabel("wp/meta/query", sql)
+	span.AddAttributes(trace.StringAttribute("wp/meta/query", sql))
 
 	rows, err := database(c).Query(sql, args...)
 	if err != nil {
@@ -204,7 +203,7 @@ func (obj *Object) GetMeta(c context.Context, keys ...string) (map[string]string
 		meta[key] = val
 	}
 
-	span.SetLabel("wp/meta/count", strconv.Itoa(len(meta)))
+	span.AddAttributes(trace.Int64Attribute("wp/meta/count", int64(len(meta))))
 
 	return meta, nil
 }
@@ -239,7 +238,7 @@ func getObjects(c context.Context, objectIds ...int64) ([]*Object, error) {
 		return nil, err
 	}
 
-	trace.FromContext(c).SetLabel("wp/object/query", stmt)
+	trace.FromContext(c).AddAttributes(trace.StringAttribute("wp/object/query", stmt))
 
 	rows, err := database(c).Query(stmt, args...)
 	if err != nil {
@@ -286,7 +285,7 @@ func getObjects(c context.Context, objectIds ...int64) ([]*Object, error) {
 		}
 	}
 
-	trace.FromContext(c).SetLabel("wp/object/count", strconv.Itoa(len(ret)))
+	trace.FromContext(c).AddAttributes(trace.Int64Attribute("wp/object/count", int64(len(ret))))
 
 	var mre MissingResourcesError
 	for i, obj := range ret {
@@ -736,7 +735,7 @@ func queryObjects(c context.Context, opts *ObjectQueryOptions) (Iterator, error)
 		return nil, err
 	}
 
-	trace.FromContext(c).SetLabel("wp/object/query", stmt)
+	trace.FromContext(c).AddAttributes(trace.StringAttribute("wp/object/query", stmt))
 
 	rows, err := database(c).Query(stmt, args...)
 	if err != nil {
@@ -756,7 +755,7 @@ func queryObjects(c context.Context, opts *ObjectQueryOptions) (Iterator, error)
 		cursors = append(cursors, cursor)
 	}
 
-	trace.FromContext(c).SetLabel("wp/object/count", strconv.Itoa(len(ids)))
+	trace.FromContext(c).AddAttributes(trace.Int64Attribute("wp/object/count", int64(len(ids))))
 
 	it := iteratorImpl{cursor: opts.After}
 

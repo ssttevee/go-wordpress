@@ -1,7 +1,7 @@
 package wordpress
 
 import (
-	"cloud.google.com/go/trace"
+	"go.opencensus.io/trace"
 	"encoding/base64"
 	"fmt"
 	"github.com/elgris/sqrl"
@@ -85,7 +85,7 @@ func getTerms(c context.Context, termIds ...int64) ([]*Term, error) {
 		return nil, err
 	}
 
-	trace.FromContext(c).SetLabel("wp/term/query", stmt)
+	trace.FromContext(c).AddAttributes(trace.StringAttribute("wp/term/query", stmt))
 
 	rows, err := database(c).Query(stmt, args...)
 	if err != nil {
@@ -114,7 +114,7 @@ func getTerms(c context.Context, termIds ...int64) ([]*Term, error) {
 		}
 	}
 
-	trace.FromContext(c).SetLabel("wp/term/count", strconv.Itoa(len(ret)))
+	trace.FromContext(c).AddAttributes(trace.Int64Attribute("wp/term/count", int64(len(ret))))
 
 	var mre MissingResourcesError
 	for i, term := range ret {
@@ -233,7 +233,7 @@ func queryTerms(c context.Context, opts *TermQueryOptions) (Iterator, error) {
 		return nil, err
 	}
 
-	trace.FromContext(c).SetLabel("wp/term/query", sql)
+	trace.FromContext(c).AddAttributes(trace.StringAttribute("wp/term/query", sql))
 
 	rows, err := database(c).Query(sql, args...)
 	if err != nil {
@@ -250,7 +250,7 @@ func queryTerms(c context.Context, opts *TermQueryOptions) (Iterator, error) {
 		ids = append(ids, id)
 	}
 
-	trace.FromContext(c).SetLabel("wp/term/count", strconv.Itoa(len(ids)))
+	trace.FromContext(c).AddAttributes(trace.Int64Attribute("wp/term/count", int64(len(ids))))
 
 	it := iteratorImpl{cursor: opts.After}
 

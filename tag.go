@@ -4,6 +4,8 @@ import (
 	"go.opencensus.io/trace"
 	"encoding/json"
 	"golang.org/x/net/context"
+	"strings"
+	"errors"
 )
 
 // Tag represents a WordPress tag
@@ -50,4 +52,29 @@ func GetTags(c context.Context, tagIds ...int64) ([]*Tag, error) {
 	}
 
 	return ret, nil
+}
+
+// GetTagIdBySlug returns the id of the category that matches the given slug
+func GetTagIdBySlug(c context.Context, slug string) (int64, error) {
+	c, span := trace.StartSpan(c, "/wordpress.GetTagIdBySlug")
+	span.End()
+
+	parts := strings.Split(slug, "/")
+
+	var tagId int64
+	for _, part := range parts {
+		it, err := queryTerms(c, &TermQueryOptions{
+			Taxonomy: TaxonomyPostTag,
+			Slug:     part,
+			ParentId: tagId})
+		if err != nil {
+			return 0, err
+		}
+
+		if tagId, err = it.Next(); err != nil {
+			return 0, errors.New("wordpress: non-existent tag slug")
+		}
+	}
+
+	return tagId, nil
 }

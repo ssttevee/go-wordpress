@@ -109,7 +109,9 @@ func QueryPosts(c context.Context, opts *ObjectQueryOptions) (Iterator, error) {
 	c, span := trace.StartSpan(c, "/wordpress.QueryPosts")
 	defer span.End()
 
-	opts.PostStatus = PostStatusPublish
+	if opts.PostStatus == "" {
+		opts.PostStatus = PostStatusPublish
+	}
 
 	if opts.PostType == "" {
 		opts.PostType = PostTypePost

@@ -76,6 +76,14 @@ func database(c context.Context) *sql.DB {
 	return db
 }
 
+func Database(c context.Context) *sql.DB {
+	return database(c)
+}
+
+func Table(c context.Context, tableN string) string {
+	return table(c, tableN)
+}
+
 // GetOption returns the string value of the WordPress option
 func GetOption(c context.Context, name string) (string, error) {
 	c, span := trace.StartSpan(c, "/wordpress.GetOption")

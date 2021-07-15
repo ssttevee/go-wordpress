@@ -133,7 +133,11 @@ func getTerms(c context.Context, termIds ...int64) ([]*Term, error) {
 	return ret, nil
 }
 
-// queryTerms returns the ids of the terms that match the query
+// QueryTerms returns the ids of the terms that match the query
+func QueryTerms(c context.Context, opts *TermQueryOptions) (Iterator, error) {
+	return queryTerms(c, opts)
+}
+
 func queryTerms(c context.Context, opts *TermQueryOptions) (Iterator, error) {
 	order := opts.Order
 	if len(order) == 0 {

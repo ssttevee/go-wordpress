@@ -1,10 +1,10 @@
 package wordpress
 
 import (
-	"go.opencensus.io/trace"
 	"encoding/base64"
 	"fmt"
 	"github.com/elgris/sqrl"
+	"go.opencensus.io/trace"
 	"golang.org/x/net/context"
 	"strconv"
 )
@@ -230,7 +230,7 @@ func queryTerms(c context.Context, opts *TermQueryOptions) (Iterator, error) {
 			if len(pred) == 0 {
 				pred = "t.term_id"
 			}
-			
+
 			if opts.OrderAscending {
 				pred += ">"
 			} else {
